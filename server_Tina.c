@@ -130,7 +130,7 @@ void *work_function(void *newsockfd_ptr) {
 	   char erro_msg[] = "ERRO   It's not okay to send 'OK'";
 	   n = write(newsockfd, erro_msg, strlen(erro_msg));
 	}
-	
+
 
 	if (n < 0)
 	{
