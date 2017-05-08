@@ -16,7 +16,7 @@ The port number is passed as an argument
 
 #define NUM_THREADS 2
 
-void *work_function(void *portno_from_argv);
+void *work_function(void *sockfd_ptr);
 
 int main(int argc, char **argv)
 {
@@ -78,10 +78,10 @@ int main(int argc, char **argv)
 	//long int portno_from_argv = atoi(argv[1]);
 
 	pthread_create(&tids[0], NULL, work_function, (void *)(&sockfd));
-    //pthread_create(&tids[1], NULL, work_function, (void *)(&sockfd));
+    pthread_create(&tids[1], NULL, work_function, (void *)(&sockfd));
 
 	pthread_join(tids[0], NULL);
-	//pthread_join(tids[1], NULL);
+	pthread_join(tids[1], NULL);
 
 	return 0;
 }
@@ -97,6 +97,7 @@ void *work_function(void *sockfd_ptr) {
 	/* Accept a connection - block until a connection is ready to
 	be accepted. Get back a new file descriptor to communicate on. */
 	printf("sockfd %d\n", *((int *)sockfd_ptr));
+	
 	newsockfd = accept(	*((int *)sockfd_ptr), (struct sockaddr *) &cli_addr,
 					   &clilen);
 
