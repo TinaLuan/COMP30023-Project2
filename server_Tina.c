@@ -16,7 +16,7 @@ The port number is passed as an argument
 
 #define NUM_THREADS 2
 
-void *work_function(void *sockfd_ptr);
+void *work_function(void *newsockfd_ptr);
 
 int main(int argc, char **argv)
 {
@@ -28,12 +28,12 @@ int main(int argc, char **argv)
 		exit(1);
 	}
 
-	//int sockfd, newsockfd, portno, clilen;
-	int sockfd, portno;
+	int sockfd, newsockfd, portno;//, clilen;
+	socklen_t clilen;
 	//char buffer[256];
-	//struct sockaddr_in serv_addr, cli_addr;
-	struct sockaddr_in serv_addr;
-	int n;
+	struct sockaddr_in serv_addr, cli_addr;
+
+
 
 	/* Create TCP socket */
 
@@ -73,46 +73,40 @@ int main(int argc, char **argv)
 
     listen(sockfd,5);
 
-	pthread_t tids[NUM_THREADS]; // 2
+	clilen = sizeof(cli_addr);
 
-	//long int portno_from_argv = atoi(argv[1]);
-
-	pthread_create(&tids[0], NULL, work_function, (void *)(&sockfd));
-    pthread_create(&tids[1], NULL, work_function, (void *)(&sockfd));
-
-	pthread_join(tids[0], NULL);
-	pthread_join(tids[1], NULL);
-
-	return 0;
-}
-
-
-void *work_function(void *sockfd_ptr) {
-	char buffer[256];
-	struct sockaddr_in cli_addr;
-	int newsockfd, clilen, n;
-
-    clilen = sizeof(cli_addr);
-
+	//pthread_t tids[NUM_THREADS]; // 2
+while (1){
 	/* Accept a connection - block until a connection is ready to
 	be accepted. Get back a new file descriptor to communicate on. */
-	printf("sockfd %d\n", *((int *)sockfd_ptr));
-	
-	newsockfd = accept(	*((int *)sockfd_ptr), (struct sockaddr *) &cli_addr,
-					   &clilen);
 
+	newsockfd = accept(	sockfd, (struct sockaddr *) &cli_addr, &clilen);
 	if (newsockfd < 0)
 	{
 	   perror("ERROR on accept");
 	   exit(1);
 	}
 
+	pthread_t tid;
+	pthread_create(&tid, NULL, work_function, (void *)&newsockfd);
+	pthread_join(tid, NULL);
+}
+	close(sockfd);
+	//pthread_exit(NULL);
+	return 0;
+}
+
+
+void *work_function(void *newsockfd_ptr) {
+	char buffer[256];
+	int n;
+	int newsockfd = *((int *)newsockfd_ptr);
+
 	bzero(buffer,256);
 
 	/* Read characters from the connection,
 	   then process */
-	//while (1){
-	n = read(newsockfd,buffer,255);
+	n = read( newsockfd ,buffer,255);
 
 	if (n < 0)
 	{
@@ -136,7 +130,7 @@ void *work_function(void *sockfd_ptr) {
 	   char erro_msg[] = "ERRO   It's not okay to send 'OK'";
 	   n = write(newsockfd, erro_msg, strlen(erro_msg));
 	}
-	//n = write(newsockfd,"I got your message",18);
+	\;
 
 	if (n < 0)
 	{
@@ -147,7 +141,7 @@ void *work_function(void *sockfd_ptr) {
 	/* close socket */
 
 	//close(sockfd);
-	close( *((int *)sockfd_ptr) );
-	//}
+//	close( *((int *)sockfd_ptr) );
 
+	return NULL; // ??????
 }
