@@ -14,14 +14,12 @@ The port number is passed as an argument
 #include <unistd.h>
 #include <pthread.h>
 
-#define NUM_THREADS 2
+//#define NUM_THREADS 2
 
 void *work_function(void *newsockfd_ptr);
 
 int main(int argc, char **argv)
 {
-
-
 	if (argc < 2)
 	{
 		fprintf(stderr,"ERROR, no port provided\n");
@@ -33,10 +31,7 @@ int main(int argc, char **argv)
 	//char buffer[256];
 	struct sockaddr_in serv_addr, cli_addr;
 
-
-
 	/* Create TCP socket */
-
    sockfd = socket(AF_INET, SOCK_STREAM, 0);
 
    if (sockfd < 0)
@@ -44,7 +39,6 @@ int main(int argc, char **argv)
 	   perror("ERROR opening socket");
 	   exit(1);
    }
-
 
    bzero((char *) &serv_addr, sizeof(serv_addr));
 
@@ -54,16 +48,12 @@ int main(int argc, char **argv)
    /* Create address we're going to listen on (given port number)
 	- converted to network byte order & any IP address for
 	this machine */
-
    serv_addr.sin_family = AF_INET;
    serv_addr.sin_addr.s_addr = INADDR_ANY;
    serv_addr.sin_port = htons(portno);  // store in machine-neutral format
 
 	/* Bind address to the socket */
-
-   if (bind(sockfd, (struct sockaddr *) &serv_addr,
-		   sizeof(serv_addr)) < 0)
-   {
+   if (bind(sockfd, (struct sockaddr *) &serv_addr, sizeof(serv_addr)) < 0) {
 	   perror("ERROR on binding");
 	   exit(1);
    }
@@ -117,20 +107,27 @@ void *work_function(void *newsockfd_ptr) {
 	//printf("Here is the message: %s\n",buffer);
 
 	// Get rid of the new line character in the end
-	buffer[strlen(buffer)-1] = '\0';
+	//buffer[strlen(buffer)-1] = '\0';
 
-	if (strcmp(buffer, "PING") == 0) {
-	   n = write(newsockfd,"PONG",4);
+   //  (strcmp(buffer, "PING\n") == 0 || strcmp(buffer, "PING\r\n") == 0 ) {
+   //  n = write(newsockfd,"PONG",4);
+   //
+   // } else if (strcmp(buffer, "PONG\n") == 0 || strcmp(buffer, "PONG\r\n") == 0 ) {
+   //  char erro_msg[] = "ERRO   'PONG' is reserved for the server";
+   //  n = write(newsockfd, erro_msg, strlen(erro_msg));
+   //
+   // } else if (strcmp(buffer, "OK\n") == 0 || strcmp(buffer, "OK\r\n") == 0 ) {
+   //  char erro_msg[] = "ERRO   It's not okay to send 'OK'";
+   //  n = write(newsockfd, erro_msg, strlen(erro_msg));
+   //
 
-	} else if (strcmp(buffer, "PONG") == 0) {
-	   char erro_msg[] = "ERRO   'PONG' is reserved for the server";
-	   n = write(newsockfd, erro_msg, strlen(erro_msg));
-
-	} else if (strcmp(buffer, "OK") == 0) {
-	   char erro_msg[] = "ERRO   It's not okay to send 'OK'";
-	   n = write(newsockfd, erro_msg, strlen(erro_msg));
+	char header[5];
+	strncpy(header, buffer, 4);
+	header[4] = '\0';
+	if (strcmp(header, "SOLN") == 0) {
+		
+		n = write(newsockfd, "!!", 2);
 	}
-
 
 	if (n < 0)
 	{
