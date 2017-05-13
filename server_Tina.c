@@ -16,6 +16,7 @@ The port number is passed as an argument
 #include <stdbool.h>
 
 #include "code/uint256.h"
+#include "code/crypto/sha256.c"
 
 //#define NUM_THREADS 2
 
@@ -150,9 +151,11 @@ void *work_function(void *newsockfd_ptr) {
 }
 
 BYTE hex_to_byte(char buffer[], int start) {
-	char one_byte[2];
+	char one_byte[3];
 	strncpy(one_byte, buffer + start, 2);
+	one_byte[2] = '\0';
 	BYTE result_byte = strtoul(one_byte, NULL, 16);
+	//printf("%s  %x\n", one_byte, result_byte);
 	return result_byte;
 }
 
@@ -176,7 +179,7 @@ bool verify(char buffer[]) {
 	expo = alpha;
 	expo -= 0x3;
 	expo *= 0x8;
-	printf("alpha %d\n", alpha);
+	//printf("alpha %d\n", alpha);
 	base[31] = 0x2;
 	uint256_exp(res, base, expo);
 	uint256_mul(target, beta, res);
@@ -192,14 +195,25 @@ bool verify(char buffer[]) {
 		// skip the space
 		if (i == 14 + 64) i++;
 		result[j++] = hex_to_byte(buffer, i);
-		printf("%hhu\n", result[j-1]);
+		//printf("%x", result[j-1]);
 	}
+SHA256_CTX ctx;
+BYTE hash1[SHA256_BLOCK_SIZE], hash2[SHA256_BLOCK_SIZE]; // 32
+sha256_init(&ctx);
+sha256_update(&ctx, result, 40);
+sha256_final(&ctx, hash1);
 
-
+sha256_init(&ctx);
+sha256_update(&ctx, hash1, 32);
+sha256_final(&ctx, hash2);
+print_uint256(hash1);
+printf("---");
+print_uint256(hash2);
 	for (i = 0; i < 32; i++) {
-		if (result[i] > target[i]) {
-			return false;
-		}
+		//printf("i %d   %hhu\n", i, hash[i]);
+		//if (hash[i] > target[i])
+		//	return false;
+
 	}
 	return true;
 }
