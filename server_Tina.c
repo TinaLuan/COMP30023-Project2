@@ -21,7 +21,13 @@ The port number is passed as an argument
 //#define NUM_THREADS 2
 
 void *work_function(void *newsockfd_ptr);
-bool verify(char buffer[]);
+int stage_A(char buffer[], int newsockfd);
+int stage_B(char buffer[], int newsockfd);
+int stage_C(char buffer[], int newsockfd);
+
+bool verify(BYTE concat[], BYTE target[]);
+void concatenate(char buffer[], BYTE concat[]);
+void calculate_target(char buffer[], BYTE target[]);
 BYTE hex_to_byte(char buffer[], int start);
 int main(int argc, char **argv)
 {
@@ -94,46 +100,31 @@ while (1){
 
 void *work_function(void *newsockfd_ptr) {
 	char buffer[256];
-	int n;
-	int newsockfd = *((int *)newsockfd_ptr);
-
+	int n, newsockfd = *((int *)newsockfd_ptr);
+	char *erro_msg; // BYTE????
 	bzero(buffer,256);
 
 	/* Read characters from the connection,
 	   then process */
 	n = read( newsockfd ,buffer,255);
-
-	if (n < 0)
-	{
+	if (n < 0) {
 	   perror("ERROR reading from socket");
 	   exit(1);
 	}
 
-	//printf("Here is the message: %s\n",buffer);
-
-	// Get rid of the new line character in the end
-	//buffer[strlen(buffer)-1] = '\0';
-
-   //  (strcmp(buffer, "PING\n") == 0 || strcmp(buffer, "PING\r\n") == 0 ) {
-   //  n = write(newsockfd,"PONG",4);
-   //
-   // } else if (strcmp(buffer, "PONG\n") == 0 || strcmp(buffer, "PONG\r\n") == 0 ) {
-   //  char erro_msg[] = "ERRO   'PONG' is reserved for the server";
-   //  n = write(newsockfd, erro_msg, strlen(erro_msg));
-   //
-   // } else if (strcmp(buffer, "OK\n") == 0 || strcmp(buffer, "OK\r\n") == 0 ) {
-   //  char erro_msg[] = "ERRO   It's not okay to send 'OK'";
-   //  n = write(newsockfd, erro_msg, strlen(erro_msg));
-   //
+	n= stage_A(buffer, newsockfd);
+	if (n < 0)
+	{
+	   perror("ERROR writing to socket");
+	   exit(1);
+	}
 
 	char header[5];
 	strncpy(header, buffer, 4);
 	header[4] = '\0';
 
 	if (strcmp(header, "SOLN") == 0) {
-		verify(buffer);
-
-		n = write(newsockfd, "!!", 2);
+		n = stage_B(buffer, newsockfd);
 	}
 
 	if (n < 0)
@@ -142,12 +133,19 @@ void *work_function(void *newsockfd_ptr) {
 	   exit(1);
 	}
 
-	/* close socket */
+	if (strcmp(header, "WORK") == 0) {
 
-	//close(sockfd);
-//	close( *((int *)sockfd_ptr) );
+		//n = stage_C(buffer, newsockfd);
+	}
 
+ //	close( *((int *)sockfd_ptr) );
 	return NULL; // ??????
+}
+
+int stage_C(char buffer[], int newsockfd) {
+	BYTE target[32];
+	calculate_target(buffer, target);
+	return 0;
 }
 
 BYTE hex_to_byte(char buffer[], int start) {
@@ -159,10 +157,10 @@ BYTE hex_to_byte(char buffer[], int start) {
 	return result_byte;
 }
 
-bool verify(char buffer[]) {
+void calculate_target(char buffer[], BYTE target[]) {
 	int i, j;
 	uint32_t alpha, expo;
-	BYTE beta[32], base[32], res[32], target[32];
+	BYTE beta[32], base[32], res[32];
 
 	uint256_init(beta);
 	uint256_init(base);
@@ -179,14 +177,14 @@ bool verify(char buffer[]) {
 	expo = alpha;
 	expo -= 0x3;
 	expo *= 0x8;
-	//printf("alpha %d\n", alpha);
 	base[31] = 0x2;
 	uint256_exp(res, base, expo);
 	uint256_mul(target, beta, res);
 	//print_uint256(target);
+}
 
-	BYTE result[40]; // 32-BYTE seed + 8-BYTE(64bits/8) solution
-	j = 0;
+void concatenate(char buffer[], BYTE concat[]) {
+	int i, j = 0;
 	// The seed starts from index 14, with a length of 64 hex digits(2 * 32 BYTE)
 	// Then a space is between seed and solution
 	// The solution starts from index 14+64+1, with a length of 16 hex(64 bits/4)
@@ -194,26 +192,67 @@ bool verify(char buffer[]) {
 	for (i = 14 + 0; i < 14 + 64 + 1 + 16; i+=2) {
 		// skip the space
 		if (i == 14 + 64) i++;
-		result[j++] = hex_to_byte(buffer, i);
-		//printf("%x", result[j-1]);
+		concat[j++] = hex_to_byte(buffer, i);
 	}
-SHA256_CTX ctx;
-BYTE hash1[SHA256_BLOCK_SIZE], hash2[SHA256_BLOCK_SIZE]; // 32
-sha256_init(&ctx);
-sha256_update(&ctx, result, 40);
-sha256_final(&ctx, hash1);
+}
 
-sha256_init(&ctx);
-sha256_update(&ctx, hash1, 32);
-sha256_final(&ctx, hash2);
-print_uint256(hash1);
-printf("---");
-print_uint256(hash2);
-	for (i = 0; i < 32; i++) {
-		//printf("i %d   %hhu\n", i, hash[i]);
-		//if (hash[i] > target[i])
-		//	return false;
+int stage_B(char buffer[], int newsockfd) {
+	char *erro_msg= "ERRO It is not a valid proof-of-work.\n";
+	int n = 0;
 
+	BYTE target[32];
+	calculate_target(buffer, target);
+
+	// Concatenate the seed and the solution together
+	BYTE concat[40]; // 32-BYTE seed + 8-BYTE(64bits/8) solution
+	concatenate(buffer, concat);
+
+	bool is_correct = verify(concat, target);
+	if (is_correct) {
+		n = write(newsockfd, "OK", 3);
+	} else {
+		n = write(newsockfd, erro_msg, 40);
 	}
-	return true;
+	return n;
+}
+
+bool verify(BYTE concat[], BYTE target[]) {
+	SHA256_CTX ctx;
+	BYTE hash1[SHA256_BLOCK_SIZE], hash2[SHA256_BLOCK_SIZE]; // 32
+	sha256_init(&ctx);
+	sha256_update(&ctx, concat, 40);
+	sha256_final(&ctx, hash1);
+
+	sha256_init(&ctx);
+	sha256_update(&ctx, hash1, SHA256_BLOCK_SIZE);
+	sha256_final(&ctx, hash2);
+	//print_uint256(hash1);
+	//print_uint256(hash2);
+
+	int i = 0;
+	while (i<32) {
+		if (hash2[i] < target[i]) return true;
+		if (hash2[i] > target[i]) return false;
+		if (hash2[i] == target[i]) i++;
+	}
+	return false;
+}
+
+int stage_A(char buffer[], int newsockfd) {
+	int n = 0;
+	char *erro_msg;
+	//BYTE *erro_msg; // ??????
+
+	if (strcmp(buffer, "PING\n") == 0 || strcmp(buffer, "PING\r\n") == 0 ) {
+    n = write(newsockfd,"PONG",5);
+
+   } else if (strcmp(buffer, "PONG\n") == 0 || strcmp(buffer, "PONG\r\n") == 0 ) {
+    erro_msg = "ERRO   'PONG' is reserved for the server";
+    n = write(newsockfd, erro_msg, 40);
+
+   } else if (strcmp(buffer, "OK\n") == 0 || strcmp(buffer, "OK\r\n") == 0 ) {
+    erro_msg= "ERRO   It's not okay to send 'OK'";
+    n = write(newsockfd, erro_msg, 40);
+	}
+	return n;
 }
