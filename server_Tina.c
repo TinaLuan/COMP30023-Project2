@@ -13,11 +13,15 @@ The port number is passed as an argument
 #include <netinet/in.h>
 #include <unistd.h>
 #include <pthread.h>
+#include <stdbool.h>
+
+#include "code/uint256.h"
 
 //#define NUM_THREADS 2
 
 void *work_function(void *newsockfd_ptr);
-
+bool verify(char buffer[]);
+BYTE hex_to_byte(char buffer[], int start);
 int main(int argc, char **argv)
 {
 	if (argc < 2)
@@ -124,8 +128,10 @@ void *work_function(void *newsockfd_ptr) {
 	char header[5];
 	strncpy(header, buffer, 4);
 	header[4] = '\0';
+
 	if (strcmp(header, "SOLN") == 0) {
-		
+		verify(buffer);
+
 		n = write(newsockfd, "!!", 2);
 	}
 
@@ -141,4 +147,41 @@ void *work_function(void *newsockfd_ptr) {
 //	close( *((int *)sockfd_ptr) );
 
 	return NULL; // ??????
+}
+
+BYTE hex_to_byte(char buffer[], int start) {
+	char one_byte[2];
+	strncpy(one_byte, buffer + start, 2);
+	BYTE result_byte = strtoul(one_byte, NULL, 16);
+	return result_byte;
+}
+
+bool verify(char buffer[]) {
+	int i, j;
+	BYTE alpha, beta[3];
+
+	alpha = hex_to_byte(buffer, 5);
+	printf("%hhu----\n", alpha);
+	// starts from 7th, and then 6 hex digits are beta
+	j = 0;
+	for (i = 5 + 2; i < 5 + 2 + 6; i+=2) {
+		beta[j++] = hex_to_byte(buffer, i);
+	}
+
+
+
+	BYTE result[40]; // 32-BYTE seed + 8-BYTE(64bits/8) solution
+	j = 0;
+	// The seed starts from index 14, with a length of 64 hex digits(2 * 32 BYTE)
+	// Then a space is between seed and solution
+	// The solution starts from index 14+64+1, with a length of 16 hex(64 bits/4)
+	// Each pair of two hex digits (char) is a BYTE
+	for (i = 14 + 0; i < 14 + 64 + 1 + 16; i+=2) {
+		// skip the space
+		if (i == 14 + 64) i++;
+		result[j++] = hex_to_byte(buffer, i);
+		printf("%hhu\n", result[j-1]);
+	}
+
+	return true;
 }
