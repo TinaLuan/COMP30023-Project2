@@ -158,17 +158,29 @@ BYTE hex_to_byte(char buffer[], int start) {
 
 bool verify(char buffer[]) {
 	int i, j;
-	BYTE alpha, beta[3];
+	uint32_t alpha, expo;
+	BYTE beta[32], base[32], res[32], target[32];
 
-	alpha = hex_to_byte(buffer, 5);
-	printf("%hhu----\n", alpha);
+	uint256_init(beta);
+	uint256_init(base);
+	uint256_init(res);
+	uint256_init(target);
+
+	alpha = (uint32_t)hex_to_byte(buffer, 5);
+
 	// starts from 7th, and then 6 hex digits are beta
-	j = 0;
+	j = 29;
 	for (i = 5 + 2; i < 5 + 2 + 6; i+=2) {
 		beta[j++] = hex_to_byte(buffer, i);
 	}
-
-
+	expo = alpha;
+	expo -= 0x3;
+	expo *= 0x8;
+	printf("alpha %d\n", alpha);
+	base[31] = 0x2;
+	uint256_exp(res, base, expo);
+	uint256_mul(target, beta, res);
+	//print_uint256(target);
 
 	BYTE result[40]; // 32-BYTE seed + 8-BYTE(64bits/8) solution
 	j = 0;
@@ -183,5 +195,11 @@ bool verify(char buffer[]) {
 		printf("%hhu\n", result[j-1]);
 	}
 
+
+	for (i = 0; i < 32; i++) {
+		if (result[i] > target[i]) {
+			return false;
+		}
+	}
 	return true;
 }
