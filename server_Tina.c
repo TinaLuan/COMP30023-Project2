@@ -91,6 +91,7 @@ while (1){
 	pthread_t tid;
 	pthread_create(&tid, NULL, work_function, (void *)&newsockfd);
 	//pthread_join(tid, NULL);
+	pthread_detach(tid);
 }
 	close(sockfd);
 	//pthread_exit(NULL);
@@ -135,7 +136,7 @@ void *work_function(void *newsockfd_ptr) {
 
 	if (strcmp(header, "WORK") == 0) {
 
-		//n = stage_C(buffer, newsockfd);
+		n = stage_C(buffer, newsockfd);
 	}
 
  //	close( *((int *)sockfd_ptr) );
@@ -145,7 +146,56 @@ void *work_function(void *newsockfd_ptr) {
 int stage_C(char buffer[], int newsockfd) {
 	BYTE target[32];
 	calculate_target(buffer, target);
-	return 0;
+
+	BYTE concat[40]; // 32-BYTE seed + 8-BYTE(64bits/8) solution
+	concatenate(buffer, concat);
+
+	BYTE nonce[32];
+	uint256_init(nonce);
+	int i, j=24;
+	for (i=32;i<40;i++) {
+		nonce[j++] = concat[i];
+	}
+//print_uint256(nonce);
+	BYTE adder[32];
+	uint256_init(adder);
+	adder[31] = 0x1;
+
+//	print_uint256(nonce);
+	bool is_correct = false;
+	while(!is_correct) {
+		uint256_add(nonce, nonce, adder);
+		j = 32;
+		for (i = 24; i<32; i++) {
+			concat[j++] = nonce[i];
+		}
+		is_correct = verify(concat, target);
+	}
+printf("find sl\n");
+	// According to the spec, there's always a solution
+	// so no need to consider when is_correct is false
+	char solution_msg[96] = "SOLN ";
+	// difficulty 8 hex digits, 1 space, seed 64 hex, and 1 space
+	strncpy(solution_msg + 5, buffer + 5, 8+1+64+1);
+	//printf("%s\n", solution_msg);
+
+	// solution 16 hex
+	j= strlen(solution_msg);
+	for (i = 32; i<40; i++) {
+		sprintf(solution_msg+j, "%02x", concat[i]);
+		//printf("%s\n", msg);
+		j+=2;
+	}
+	solution_msg[95] = '\0';
+
+	//printf("%s\n", solution_msg);
+	int n =0;
+	if (is_correct) {
+		n = write(newsockfd, solution_msg, 96); // including \0
+	}
+
+
+	return n;
 }
 
 BYTE hex_to_byte(char buffer[], int start) {
@@ -180,7 +230,7 @@ void calculate_target(char buffer[], BYTE target[]) {
 	base[31] = 0x2;
 	uint256_exp(res, base, expo);
 	uint256_mul(target, beta, res);
-	//print_uint256(target);
+	print_uint256(target);
 }
 
 void concatenate(char buffer[], BYTE concat[]) {
