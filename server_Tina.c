@@ -14,21 +14,31 @@ The port number is passed as an argument
 #include <unistd.h>
 #include <pthread.h>
 #include <stdbool.h>
+#include <time.h>
+#include <arpa/inet.h>
 
-#include "code/uint256.h"
-#include "code/crypto/sha256.c"
+#include "uint256.h"
+#include "sha256.h"
 
 //#define NUM_THREADS 2
+typedef struct  {
+	int newsockfd;
+	struct sockaddr_in cli_addr;
+} client_info_t;
 
 void *work_function(void *newsockfd_ptr);
-int stage_A(char buffer[], int newsockfd);
-int stage_B(char buffer[], int newsockfd);
-int stage_C(char buffer[], int newsockfd);
+int stage_A(char buffer[], client_info_t client_info);
+int stage_B(char buffer[], client_info_t client_info);
+int stage_C(char buffer[], client_info_t client_info);
 
 bool verify(BYTE concat[], BYTE target[]);
 void concatenate(char buffer[], BYTE concat[]);
 void calculate_target(char buffer[], BYTE target[]);
 BYTE hex_to_byte(char buffer[], int start);
+void generate_log(struct sockaddr_in addr, int newsockfd, char *msg);
+
+
+
 int main(int argc, char **argv)
 {
 	if (argc < 2)
@@ -76,56 +86,84 @@ int main(int argc, char **argv)
 
 	clilen = sizeof(cli_addr);
 
+	FILE *log_fp = fopen("./log.txt", "w");
+	fclose(log_fp);
 	//pthread_t tids[NUM_THREADS]; // 2
+	client_info_t client_info;
+
 while (1){
 	/* Accept a connection - block until a connection is ready to
 	be accepted. Get back a new file descriptor to communicate on. */
-
 	newsockfd = accept(	sockfd, (struct sockaddr *) &cli_addr, &clilen);
-	if (newsockfd < 0)
-	{
+	if (newsockfd < 0) {
 	   perror("ERROR on accept");
 	   exit(1);
 	}
+	generate_log( cli_addr,newsockfd, "CONNECTION\n");
 
 	pthread_t tid;
-	pthread_create(&tid, NULL, work_function, (void *)&newsockfd);
+//	struct client_info.newsockfd = newsockfd;
+//	struct client_info.cli_addr = cli_addr;
+client_info.newsockfd = newsockfd;
+client_info.cli_addr = cli_addr;
+	//pthread_create(&tid, NULL, work_function, (void *)&newsockfd);
+	pthread_create(&tid, NULL, work_function, (void *)&client_info);
 	//pthread_join(tid, NULL);
 	pthread_detach(tid);
 }
+
 	close(sockfd);
+
 	//pthread_exit(NULL);
 	return 0;
 }
 
 
-void *work_function(void *newsockfd_ptr) {
+//void *work_function(void *newsockfd_ptr ) {
+void *work_function(void *client_info_ptr ) {
+	client_info_t client_info = *((client_info_t *)client_info_ptr);
 	char buffer[256];
-	int n, newsockfd = *((int *)newsockfd_ptr);
+	//int n, newsockfd = *((int *)newsockfd_ptr);
+	int n, newsockfd = client_info.newsockfd;
 	char *erro_msg; // BYTE????
-	bzero(buffer,256);
+
+while(1) {
 
 	/* Read characters from the connection,
 	   then process */
+bzero(buffer,256);
 	n = read( newsockfd ,buffer,255);
 	if (n < 0) {
-	   perror("ERROR reading from socket");
-	   exit(1);
+	   //perror("ERROR reading from socket");
+	   generate_log(client_info.cli_addr, newsockfd, "DISCONNECTION\n");
+	   break;
+	   //exit(1);
 	}
 
-	n= stage_A(buffer, newsockfd);
-	if (n < 0)
-	{
-	   perror("ERROR writing to socket");
-	   exit(1);
+	if (strlen(buffer) == 0) {
+		continue;
 	}
+
+	char msg[270] = "READ: ";
+	strcat(msg, buffer);
+	generate_log(client_info.cli_addr, newsockfd, msg);
+
+	n= stage_A(buffer, client_info);
+
 
 	char header[5];
 	strncpy(header, buffer, 4);
 	header[4] = '\0';
 
 	if (strcmp(header, "SOLN") == 0) {
-		n = stage_B(buffer, newsockfd);
+		//n = stage_B(buffer, newsockfd);
+		n = stage_B(buffer,client_info);
+	}
+
+	else if (strcmp(header, "WORK") == 0) {
+
+		//n = stage_C(buffer, newsockfd);
+		n = stage_C(buffer, client_info);
 	}
 
 	if (n < 0)
@@ -133,17 +171,13 @@ void *work_function(void *newsockfd_ptr) {
 	   perror("ERROR writing to socket");
 	   exit(1);
 	}
-
-	if (strcmp(header, "WORK") == 0) {
-
-		n = stage_C(buffer, newsockfd);
-	}
-
+}
  //	close( *((int *)sockfd_ptr) );
 	return NULL; // ??????
 }
 
-int stage_C(char buffer[], int newsockfd) {
+//int stage_C(char buffer[], int newsockfd) {
+int stage_C(char buffer[], client_info_t client_info) {
 	BYTE target[32];
 	calculate_target(buffer, target);
 
@@ -171,7 +205,7 @@ int stage_C(char buffer[], int newsockfd) {
 		}
 		is_correct = verify(concat, target);
 	}
-printf("find sl\n");
+//printf("find sl\n");
 	// According to the spec, there's always a solution
 	// so no need to consider when is_correct is false
 	char solution_msg[96] = "SOLN ";
@@ -191,10 +225,13 @@ printf("find sl\n");
 	//printf("%s\n", solution_msg);
 	int n =0;
 	if (is_correct) {
-		n = write(newsockfd, solution_msg, 96); // including \0
+		n = write(client_info.newsockfd, solution_msg, 96); // including \0
 	}
-
-
+	if (n >= 0) {
+		char log_msg[270] = "WRITE: ";
+		strcat(log_msg, solution_msg);
+		generate_log(client_info.cli_addr, client_info.newsockfd, log_msg);
+	}
 	return n;
 }
 
@@ -246,8 +283,9 @@ void concatenate(char buffer[], BYTE concat[]) {
 	}
 }
 
-int stage_B(char buffer[], int newsockfd) {
-	char *erro_msg= "ERRO It is not a valid proof-of-work.\n";
+//int stage_B(char buffer[], int newsockfd) {
+int stage_B(char buffer[], client_info_t client_info) {
+	char *msg= "ERRO It is not a valid proof-of-work.\n";
 	int n = 0;
 
 	BYTE target[32];
@@ -259,9 +297,16 @@ int stage_B(char buffer[], int newsockfd) {
 
 	bool is_correct = verify(concat, target);
 	if (is_correct) {
-		n = write(newsockfd, "OK", 3);
+		msg = "OKAY\r\n";
+		n = write(client_info.newsockfd, msg, 3);
 	} else {
-		n = write(newsockfd, erro_msg, 40);
+		n = write(client_info.newsockfd, msg, 40);
+	}
+	if (n >= 0) {
+		char log_msg[270] = "WRITE: ";
+		strcat(log_msg, msg);
+		//log_msg[strlen(log_msg)] = '\0';
+		generate_log(client_info.cli_addr, client_info.newsockfd, log_msg);
 	}
 	return n;
 }
@@ -288,21 +333,48 @@ bool verify(BYTE concat[], BYTE target[]) {
 	return false;
 }
 
-int stage_A(char buffer[], int newsockfd) {
+//int stage_A(char buffer[], int newsockfd) {
+int stage_A(char buffer[], client_info_t client_info) {
 	int n = 0;
-	char *erro_msg;
+	char *msg;
 	//BYTE *erro_msg; // ??????
 
 	if (strcmp(buffer, "PING\n") == 0 || strcmp(buffer, "PING\r\n") == 0 ) {
-    n = write(newsockfd,"PONG",5);
+    msg = "PONG\r\n";
+	n = write(client_info.newsockfd,msg,6);
 
    } else if (strcmp(buffer, "PONG\n") == 0 || strcmp(buffer, "PONG\r\n") == 0 ) {
-    erro_msg = "ERRO   'PONG' is reserved for the server";
-    n = write(newsockfd, erro_msg, 40);
+    msg = "ERRO   'PONG' is reserved for the server";
+    n = write(client_info.newsockfd, msg, strlen(msg));
 
    } else if (strcmp(buffer, "OK\n") == 0 || strcmp(buffer, "OK\r\n") == 0 ) {
-    erro_msg= "ERRO   It's not okay to send 'OK'";
-    n = write(newsockfd, erro_msg, 40);
+    msg= "ERRO   It's not okay to send 'OK'";
+    n = write(client_info.newsockfd, msg, strlen(msg));
+	}
+
+	if (n >= 0) {
+		char log_msg[270] = "WRITE: ";
+		strcat(log_msg, msg);
+		generate_log(client_info.cli_addr, client_info.newsockfd, log_msg);
 	}
 	return n;
+}
+
+void generate_log(struct sockaddr_in addr, int newsockfd, char *msg) {
+	FILE *fp = fopen("./log.txt", "a");
+	time_t t = time(NULL);
+    struct tm tm = *localtime(&t);
+	//fprintf(fp, "%d-%d-%d %d:%d:%d ", tm.tm_year + 1900, tm.tm_mon + 1,
+	//tm.tm_mday, tm.tm_hour, tm.tm_min, tm.tm_sec);
+	fprintf(fp, "%02d/%02d/%d %02d:%02d:%02d  ", tm.tm_mday, tm.tm_mon + 1, tm.tm_year + 1900,
+	 tm.tm_hour, tm.tm_min, tm.tm_sec);
+
+	char ip[16];
+	inet_ntop(AF_INET, &(addr.sin_addr), ip, 15);
+	ip[15] = '\0';
+	fprintf(fp, "%s  %d  ", ip, newsockfd);
+
+	fprintf(fp, "%s", msg);
+
+	fclose(fp);
 }

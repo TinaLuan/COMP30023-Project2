@@ -78,7 +78,7 @@ int main(int argc, char**argv)
 
 	bzero(buffer,256);
 
-    //strcpy(buffer, "PING\r\n");
+    strcpy(buffer, "PING\r\n");
 	//strcpy(buffer, "SOLN 03ffffff 0000000019d6689c085ae165831e934ff763ae46a218a6c172b3f1b60a8ce26f 1000000023212147\r\n");
 //work-out1
 	//strcpy(buffer, "WORK 1fffffff 0000000019d6689c085ae165831e934ff763ae46a218a6c172b3f1b60a8ce26f 1000000023212000\r\n");
@@ -89,7 +89,7 @@ int main(int argc, char**argv)
 // 4
 	//strcpy(buffer,"WORK 1dffffff 0000000019d6689c085ae165831e934ff763ae46a218a6c172b3f1b60a8ce26f 1000000023212399 01\r\n");
 // 5
-    strcpy(buffer, "WORK 1d29ffff 0000000019d6689c085ae165831e934ff763ae46a218a6c172b3f1b60a8ce26f 1000000023212399 04\r\n");
+    //strcpy(buffer, "WORK 1d29ffff 0000000019d6689c085ae165831e934ff763ae46a218a6c172b3f1b60a8ce26f 1000000023212399 04\r\n");
 
 	//strcpy(buffer, "SOLN 1fffffff 0000000019d6689c085ae165831e934ff763ae46a218a6c172b3f1b60a8ce26f 10000000232123a2\r\n");
 
