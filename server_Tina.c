@@ -102,10 +102,9 @@ while (1){
 	generate_log( cli_addr,newsockfd, "CONNECTION\n");
 
 	pthread_t tid;
-//	struct client_info.newsockfd = newsockfd;
-//	struct client_info.cli_addr = cli_addr;
-client_info.newsockfd = newsockfd;
-client_info.cli_addr = cli_addr;
+
+	client_info.newsockfd = newsockfd;
+	client_info.cli_addr = cli_addr;
 	//pthread_create(&tid, NULL, work_function, (void *)&newsockfd);
 	pthread_create(&tid, NULL, work_function, (void *)&client_info);
 	//pthread_join(tid, NULL);
@@ -114,7 +113,6 @@ client_info.cli_addr = cli_addr;
 
 	close(sockfd);
 
-	//pthread_exit(NULL);
 	return 0;
 }
 
@@ -127,52 +125,47 @@ void *work_function(void *client_info_ptr ) {
 	int n, newsockfd = client_info.newsockfd;
 	char *erro_msg; // BYTE????
 
-while(1) {
+	while(1) {
+		bzero(buffer,256);
+		/* Read characters from the connection,
+		   then process */
+		n = read( newsockfd ,buffer,255);
+		if (n < 0) {
+		   generate_log(client_info.cli_addr, newsockfd, "DISCONNECTION\n");
+		   break;
+		}
+		if (buffer[0] == '\0') {
+			break;
+		}
+		char msg[270] = "READ: ";
+		strcat(msg, buffer);
+		generate_log(client_info.cli_addr, newsockfd, msg);
 
-	/* Read characters from the connection,
-	   then process */
-bzero(buffer,256);
-	n = read( newsockfd ,buffer,255);
-	if (n < 0) {
-	   //perror("ERROR reading from socket");
-	   generate_log(client_info.cli_addr, newsockfd, "DISCONNECTION\n");
-	   break;
-	   //exit(1);
+
+		n= stage_A(buffer, client_info);
+
+		char header[5];
+		strncpy(header, buffer, 4);
+		header[4] = '\0';
+
+		if (strcmp(header, "SOLN") == 0) {
+			n = stage_B(buffer,client_info);
+		}
+
+		else if (strcmp(header, "WORK") == 0) {
+			n = stage_C(buffer, client_info);
+		}
+
+		if (n < 0){
+		   //perror("ERROR writing to socket");
+		   //exit(1);
+		   generate_log(client_info.cli_addr, newsockfd, "DISCONNECTION\n");
+		   break;
+		}
 	}
+	close(newsockfd);
+	pthread_exit(NULL);
 
-	if (strlen(buffer) == 0) {
-		continue;
-	}
-
-	char msg[270] = "READ: ";
-	strcat(msg, buffer);
-	generate_log(client_info.cli_addr, newsockfd, msg);
-
-	n= stage_A(buffer, client_info);
-
-
-	char header[5];
-	strncpy(header, buffer, 4);
-	header[4] = '\0';
-
-	if (strcmp(header, "SOLN") == 0) {
-		//n = stage_B(buffer, newsockfd);
-		n = stage_B(buffer,client_info);
-	}
-
-	else if (strcmp(header, "WORK") == 0) {
-
-		//n = stage_C(buffer, newsockfd);
-		n = stage_C(buffer, client_info);
-	}
-
-	if (n < 0)
-	{
-	   perror("ERROR writing to socket");
-	   exit(1);
-	}
-}
- //	close( *((int *)sockfd_ptr) );
 	return NULL; // ??????
 }
 
