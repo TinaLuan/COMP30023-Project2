@@ -4,7 +4,6 @@ The port number is passed as an argument
 
  To compile: gcc server.c -o server
 */
-
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -19,8 +18,13 @@ The port number is passed as an argument
 
 #include "uint256.h"
 #include "sha256.h"
+#include "helper.h"
 
 //#define NUM_THREADS 2
+pthread_mutex_t mutex;
+int client_num = 0;
+int work_num = 0;
+
 typedef struct  {
 	int newsockfd;
 	struct sockaddr_in cli_addr;
@@ -99,6 +103,13 @@ while (1){
 	   perror("ERROR on accept");
 	   exit(1);
 	}
+	client_num++;
+	if (client_num >100) {
+		close(newsockfd);
+		client_num--;
+		continue;
+	}
+
 	generate_log( cli_addr,newsockfd, "CONNECTION\n");
 
 	pthread_t tid;
@@ -107,6 +118,7 @@ while (1){
 	client_info.cli_addr = cli_addr;
 	//pthread_create(&tid, NULL, work_function, (void *)&newsockfd);
 	pthread_create(&tid, NULL, work_function, (void *)&client_info);
+
 	//pthread_join(tid, NULL);
 	pthread_detach(tid);
 }
@@ -137,23 +149,23 @@ void *work_function(void *client_info_ptr ) {
 		if (buffer[0] == '\0') {
 			break;
 		}
+//printf("111\n");
 		char msg[270] = "READ: ";
 		strcat(msg, buffer);
 		generate_log(client_info.cli_addr, newsockfd, msg);
 
-
-		n= stage_A(buffer, client_info);
-
-		char header[5];
-		strncpy(header, buffer, 4);
-		header[4] = '\0';
-
+		char header[5] = "";
+		if (strlen(buffer)>=4) {
+			strncpy(header, buffer, 4);
+			header[4] = '\0';
+		}
+//printf("222\n");
 		if (strcmp(header, "SOLN") == 0) {
 			n = stage_B(buffer,client_info);
-		}
-
-		else if (strcmp(header, "WORK") == 0) {
+		} else if (strcmp(header, "WORK") == 0) {
 			n = stage_C(buffer, client_info);
+		} else {
+			n = stage_A(buffer, client_info);
 		}
 
 		if (n < 0){
@@ -171,6 +183,35 @@ void *work_function(void *client_info_ptr ) {
 
 //int stage_C(char buffer[], int newsockfd) {
 int stage_C(char buffer[], client_info_t client_info) {
+	char *msg;
+	int n= 0;
+	//bool isError = false;
+
+	int len = str_char_count(buffer, ' ');
+	char **list = tokenizer(buffer);
+	if (len != 5) {
+		msg= "ERRO invalid message\r\n";
+		n = write(client_info.newsockfd, msg, strlen(msg));
+		return n;
+	}
+	if (strlen(list[0]) != 4 || strlen(list[1]) != 8 || strlen(list[2]) != 64
+	|| strlen(list[3]) != 16 || strlen(list[4])-2 != 2) {
+		//isError = true;
+		//printf("%d %d %d %d %d\n", strlen(list[0]), strlen(list[1]),
+		//strlen(list[2]), strlen(list[3]), strlen(list[4]));
+		msg= "ERRO invalid message\r\n";
+		n = write(client_info.newsockfd, msg, strlen(msg));
+		return n;
+	}
+
+
+	work_num++;
+	if (work_num > 11) {
+		msg= "ERRO too many works\r\n";
+		n = write(client_info.newsockfd, msg, strlen(msg));
+		work_num--;
+		return n;
+	}
 	BYTE target[32];
 	calculate_target(buffer, target);
 
@@ -201,7 +242,7 @@ int stage_C(char buffer[], client_info_t client_info) {
 //printf("find sl\n");
 	// According to the spec, there's always a solution
 	// so no need to consider when is_correct is false
-	char solution_msg[96] = "SOLN ";
+	char solution_msg[97] = "SOLN ";
 	// difficulty 8 hex digits, 1 space, seed 64 hex, and 1 space
 	strncpy(solution_msg + 5, buffer + 5, 8+1+64+1);
 	//printf("%s\n", solution_msg);
@@ -213,12 +254,13 @@ int stage_C(char buffer[], client_info_t client_info) {
 		//printf("%s\n", msg);
 		j+=2;
 	}
-	solution_msg[95] = '\0';
+	solution_msg[95] = '\r';
+	solution_msg[96] = '\n';
 
 	//printf("%s\n", solution_msg);
-	int n =0;
+	//int n =0;
 	if (is_correct) {
-		n = write(client_info.newsockfd, solution_msg, 96); // including \0
+		n = write(client_info.newsockfd, solution_msg, 97); // not including \0
 	}
 	if (n >= 0) {
 		char log_msg[270] = "WRITE: ";
@@ -249,7 +291,7 @@ void calculate_target(char buffer[], BYTE target[]) {
 
 	alpha = (uint32_t)hex_to_byte(buffer, 5);
 
-	// starts from 7th, and then 6 hex digits are beta
+ 	//starts from 7th, and then 6 hex digits are beta
 	j = 29;
 	for (i = 5 + 2; i < 5 + 2 + 6; i+=2) {
 		beta[j++] = hex_to_byte(buffer, i);
@@ -259,8 +301,8 @@ void calculate_target(char buffer[], BYTE target[]) {
 	expo *= 0x8;
 	base[31] = 0x2;
 	uint256_exp(res, base, expo);
-	uint256_mul(target, beta, res);
-	print_uint256(target);
+	uint256_mul(target, beta,res);
+	//print_uint256(target);
 }
 
 void concatenate(char buffer[], BYTE concat[]) {
@@ -276,10 +318,30 @@ void concatenate(char buffer[], BYTE concat[]) {
 	}
 }
 
-//int stage_B(char buffer[], int newsockfd) {
 int stage_B(char buffer[], client_info_t client_info) {
-	char *msg= "ERRO It is not a valid proof-of-work.\n";
-	int n = 0;
+	char *msg;
+	int n= 0;
+	bool isError = false;
+	// if (strlen(buffer) != 100) {
+	// 	isError = true;
+	// }
+
+	char **list = tokenizer(buffer);
+	if (sizeof(list)/sizeof(char*) != 4) {
+		isError = true;
+		printf("num %d\n", sizeof(list)/sizeof(char*));
+	}
+	if (strlen(list[0]) != 4 || strlen(list[1]) != 8 || strlen(list[2]) != 64
+	|| strlen(list[3])-2 != 16) {
+		isError = true;
+		printf("%d %d %d %d %d\n", strlen(list[0]), strlen(list[1]),
+		strlen(list[2]), strlen(list[3]));
+	}
+	if (isError) {
+		msg= "ERRO invalid message\r\n";
+		n = write(client_info.newsockfd, msg, strlen(msg));
+		return n;
+	}
 
 	BYTE target[32];
 	calculate_target(buffer, target);
@@ -293,6 +355,7 @@ int stage_B(char buffer[], client_info_t client_info) {
 		msg = "OKAY\r\n";
 		n = write(client_info.newsockfd, msg, 3);
 	} else {
+		msg = "ERRO It is not a valid proof-of-work.\r\n";
 		n = write(client_info.newsockfd, msg, 40);
 	}
 	if (n >= 0) {
@@ -343,6 +406,8 @@ int stage_A(char buffer[], client_info_t client_info) {
    } else if (strcmp(buffer, "OK\n") == 0 || strcmp(buffer, "OK\r\n") == 0 ) {
     msg= "ERRO   It's not okay to send 'OK'";
     n = write(client_info.newsockfd, msg, strlen(msg));
+	} else {
+		return n;
 	}
 
 	if (n >= 0) {
@@ -354,11 +419,11 @@ int stage_A(char buffer[], client_info_t client_info) {
 }
 
 void generate_log(struct sockaddr_in addr, int newsockfd, char *msg) {
+	pthread_mutex_lock(&mutex);
 	FILE *fp = fopen("./log.txt", "a");
 	time_t t = time(NULL);
     struct tm tm = *localtime(&t);
-	//fprintf(fp, "%d-%d-%d %d:%d:%d ", tm.tm_year + 1900, tm.tm_mon + 1,
-	//tm.tm_mday, tm.tm_hour, tm.tm_min, tm.tm_sec);
+
 	fprintf(fp, "%02d/%02d/%d %02d:%02d:%02d  ", tm.tm_mday, tm.tm_mon + 1, tm.tm_year + 1900,
 	 tm.tm_hour, tm.tm_min, tm.tm_sec);
 
@@ -370,4 +435,5 @@ void generate_log(struct sockaddr_in addr, int newsockfd, char *msg) {
 	fprintf(fp, "%s", msg);
 
 	fclose(fp);
+	pthread_mutex_unlock(&mutex);
 }
