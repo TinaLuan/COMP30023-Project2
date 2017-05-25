@@ -181,13 +181,169 @@ void *work_function(void *client_info_ptr ) {
 	return NULL; // ??????
 }
 
+
+
+BYTE hex_to_byte(char buffer[], int start) {
+	char one_byte[3];
+	strncpy(one_byte, buffer + start, 2);
+	one_byte[2] = '\0';
+	BYTE result_byte = strtoul(one_byte, NULL, 16);
+	//printf("%s  %x\n", one_byte, result_byte);
+	return result_byte;
+}
+
+void calculate_target(char buffer[], BYTE target[]) {
+	int i, j;
+	uint32_t alpha, expo;
+	BYTE beta[32], base[32], res[32];
+
+	uint256_init(beta);
+	uint256_init(base);
+	uint256_init(res);
+	uint256_init(target);
+
+	alpha = (uint32_t)hex_to_byte(buffer, 5);
+
+ 	//starts from 7th, and then 6 hex digits are beta
+	j = 29;
+	for (i = 5 + 2; i < 5 + 2 + 6; i+=2) {
+		beta[j++] = hex_to_byte(buffer, i);
+	}
+	expo = alpha;
+	expo -= 0x3;
+	expo *= 0x8;
+	base[31] = 0x2;
+	uint256_exp(res, base, expo);
+	uint256_mul(target, beta,res);
+	//print_uint256(target);
+}
+
+void concatenate(char buffer[], BYTE concat[]) {
+	int i, j = 0;
+	// The seed starts from index 14, with a length of 64 hex digits(2 * 32 BYTE)
+	// Then a space is between seed and solution
+	// The solution starts from index 14+64+1, with a length of 16 hex(64 bits/4)
+	// Each pair of two hex digits (char) is a BYTE
+	for (i = 14 + 0; i < 14 + 64 + 1 + 16; i+=2) {
+		// skip the space
+		if (i == 14 + 64) i++;
+		concat[j++] = hex_to_byte(buffer, i);
+	}
+}
+
+bool verify(BYTE concat[], BYTE target[]) {
+	SHA256_CTX ctx;
+	BYTE hash1[SHA256_BLOCK_SIZE], hash2[SHA256_BLOCK_SIZE]; // 32
+	sha256_init(&ctx);
+	sha256_update(&ctx, concat, 40);
+	sha256_final(&ctx, hash1);
+
+	sha256_init(&ctx);
+	sha256_update(&ctx, hash1, SHA256_BLOCK_SIZE);
+	sha256_final(&ctx, hash2);
+	//print_uint256(hash1);
+	//print_uint256(hash2);
+
+	int i = 0;
+	while (i<32) {
+		if (hash2[i] < target[i]) return true;
+		if (hash2[i] > target[i]) return false;
+		if (hash2[i] == target[i]) i++;
+	}
+	return false;
+}
+
+//int stage_A(char buffer[], int newsockfd) {
+int stage_A(char buffer[], client_info_t client_info) {
+	int n = 0;
+	char *msg;
+	//BYTE *erro_msg; // ??????
+
+	if (strcmp(buffer, "PING\n") == 0 || strcmp(buffer, "PING\r\n") == 0 ) {
+    msg = "PONG\r\n";
+	n = write(client_info.newsockfd,msg,6);
+
+   } else if (strcmp(buffer, "PONG\n") == 0 || strcmp(buffer, "PONG\r\n") == 0 ) {
+    msg = "ERRO   'PONG' is reserved for the server";
+    n = write(client_info.newsockfd, msg, strlen(msg));
+
+   } else if (strcmp(buffer, "OK\n") == 0 || strcmp(buffer, "OK\r\n") == 0 ) {
+    msg= "ERRO   It's not okay to send 'OK'";
+    n = write(client_info.newsockfd, msg, strlen(msg));
+	} else {
+		msg= "ERRO   don't understand";
+	    n = write(client_info.newsockfd, msg, strlen(msg));
+
+	}
+
+	if (n >= 0) {
+		char log_msg[270] = "WRITE: ";
+		strcat(log_msg, msg);
+		generate_log(client_info.cli_addr, client_info.newsockfd, log_msg);
+	}
+	return n;
+}
+
+int stage_B(char buffer[], client_info_t client_info) {
+	char *msg;
+	int n= 0;
+	bool isError = false;
+	// if (strlen(buffer) != 100) {
+	// 	isError = true;
+	// }
+	int len = str_char_count(buffer, ' ') +1;
+	char **list = tokenizer(buffer);
+	// if (sizeof(list)/sizeof(char*) != 4) {
+	// 	isError = true;
+	// 	printf("num %d\n", sizeof(list)/sizeof(char*));
+	// }
+	if (len != 4) {
+		msg= "ERRO invalid message\r\n";
+		n = write(client_info.newsockfd, msg, strlen(msg));
+		return n;
+	}
+	if (strlen(list[0]) != 4 || strlen(list[1]) != 8 || strlen(list[2]) != 64
+	|| strlen(list[3])-2 != 16) {
+		isError = true;
+		printf("%d %d %d %d %d\n", strlen(list[0]), strlen(list[1]),
+		strlen(list[2]), strlen(list[3]));
+	}
+	if (isError) {
+		msg= "ERRO invalid message\r\n";
+		n = write(client_info.newsockfd, msg, strlen(msg));
+		return n;
+	}
+
+	BYTE target[32];
+	calculate_target(buffer, target);
+
+	// Concatenate the seed and the solution together
+	BYTE concat[40]; // 32-BYTE seed + 8-BYTE(64bits/8) solution
+	concatenate(buffer, concat);
+
+	bool is_correct = verify(concat, target);
+	if (is_correct) {
+		msg = "OKAY\r\n";
+		n = write(client_info.newsockfd, msg, 6);
+	} else {
+		msg = "ERRO It is not a valid proof-of-work.\r\n";
+		n = write(client_info.newsockfd, msg, 40);
+	}
+	if (n >= 0) {
+		char log_msg[270] = "WRITE: ";
+		strcat(log_msg, msg);
+		//log_msg[strlen(log_msg)] = '\0';
+		generate_log(client_info.cli_addr, client_info.newsockfd, log_msg);
+	}
+	return n;
+}
 //int stage_C(char buffer[], int newsockfd) {
 int stage_C(char buffer[], client_info_t client_info) {
 	char *msg;
 	int n= 0;
 	//bool isError = false;
 
-	int len = str_char_count(buffer, ' ');
+	int len = str_char_count(buffer, ' ') +1;
 	char **list = tokenizer(buffer);
 	if (len != 5) {
 		msg= "ERRO invalid message\r\n";
@@ -265,154 +421,6 @@ int stage_C(char buffer[], client_info_t client_info) {
 	if (n >= 0) {
 		char log_msg[270] = "WRITE: ";
 		strcat(log_msg, solution_msg);
-		generate_log(client_info.cli_addr, client_info.newsockfd, log_msg);
-	}
-	return n;
-}
-
-BYTE hex_to_byte(char buffer[], int start) {
-	char one_byte[3];
-	strncpy(one_byte, buffer + start, 2);
-	one_byte[2] = '\0';
-	BYTE result_byte = strtoul(one_byte, NULL, 16);
-	//printf("%s  %x\n", one_byte, result_byte);
-	return result_byte;
-}
-
-void calculate_target(char buffer[], BYTE target[]) {
-	int i, j;
-	uint32_t alpha, expo;
-	BYTE beta[32], base[32], res[32];
-
-	uint256_init(beta);
-	uint256_init(base);
-	uint256_init(res);
-	uint256_init(target);
-
-	alpha = (uint32_t)hex_to_byte(buffer, 5);
-
- 	//starts from 7th, and then 6 hex digits are beta
-	j = 29;
-	for (i = 5 + 2; i < 5 + 2 + 6; i+=2) {
-		beta[j++] = hex_to_byte(buffer, i);
-	}
-	expo = alpha;
-	expo -= 0x3;
-	expo *= 0x8;
-	base[31] = 0x2;
-	uint256_exp(res, base, expo);
-	uint256_mul(target, beta,res);
-	//print_uint256(target);
-}
-
-void concatenate(char buffer[], BYTE concat[]) {
-	int i, j = 0;
-	// The seed starts from index 14, with a length of 64 hex digits(2 * 32 BYTE)
-	// Then a space is between seed and solution
-	// The solution starts from index 14+64+1, with a length of 16 hex(64 bits/4)
-	// Each pair of two hex digits (char) is a BYTE
-	for (i = 14 + 0; i < 14 + 64 + 1 + 16; i+=2) {
-		// skip the space
-		if (i == 14 + 64) i++;
-		concat[j++] = hex_to_byte(buffer, i);
-	}
-}
-
-int stage_B(char buffer[], client_info_t client_info) {
-	char *msg;
-	int n= 0;
-	bool isError = false;
-	// if (strlen(buffer) != 100) {
-	// 	isError = true;
-	// }
-
-	char **list = tokenizer(buffer);
-	if (sizeof(list)/sizeof(char*) != 4) {
-		isError = true;
-		printf("num %d\n", sizeof(list)/sizeof(char*));
-	}
-	if (strlen(list[0]) != 4 || strlen(list[1]) != 8 || strlen(list[2]) != 64
-	|| strlen(list[3])-2 != 16) {
-		isError = true;
-		printf("%d %d %d %d %d\n", strlen(list[0]), strlen(list[1]),
-		strlen(list[2]), strlen(list[3]));
-	}
-	if (isError) {
-		msg= "ERRO invalid message\r\n";
-		n = write(client_info.newsockfd, msg, strlen(msg));
-		return n;
-	}
-
-	BYTE target[32];
-	calculate_target(buffer, target);
-
-	// Concatenate the seed and the solution together
-	BYTE concat[40]; // 32-BYTE seed + 8-BYTE(64bits/8) solution
-	concatenate(buffer, concat);
-
-	bool is_correct = verify(concat, target);
-	if (is_correct) {
-		msg = "OKAY\r\n";
-		n = write(client_info.newsockfd, msg, 3);
-	} else {
-		msg = "ERRO It is not a valid proof-of-work.\r\n";
-		n = write(client_info.newsockfd, msg, 40);
-	}
-	if (n >= 0) {
-		char log_msg[270] = "WRITE: ";
-		strcat(log_msg, msg);
-		//log_msg[strlen(log_msg)] = '\0';
-		generate_log(client_info.cli_addr, client_info.newsockfd, log_msg);
-	}
-	return n;
-}
-
-bool verify(BYTE concat[], BYTE target[]) {
-	SHA256_CTX ctx;
-	BYTE hash1[SHA256_BLOCK_SIZE], hash2[SHA256_BLOCK_SIZE]; // 32
-	sha256_init(&ctx);
-	sha256_update(&ctx, concat, 40);
-	sha256_final(&ctx, hash1);
-
-	sha256_init(&ctx);
-	sha256_update(&ctx, hash1, SHA256_BLOCK_SIZE);
-	sha256_final(&ctx, hash2);
-	//print_uint256(hash1);
-	//print_uint256(hash2);
-
-	int i = 0;
-	while (i<32) {
-		if (hash2[i] < target[i]) return true;
-		if (hash2[i] > target[i]) return false;
-		if (hash2[i] == target[i]) i++;
-	}
-	return false;
-}
-
-//int stage_A(char buffer[], int newsockfd) {
-int stage_A(char buffer[], client_info_t client_info) {
-	int n = 0;
-	char *msg;
-	//BYTE *erro_msg; // ??????
-
-	if (strcmp(buffer, "PING\n") == 0 || strcmp(buffer, "PING\r\n") == 0 ) {
-    msg = "PONG\r\n";
-	n = write(client_info.newsockfd,msg,6);
-
-   } else if (strcmp(buffer, "PONG\n") == 0 || strcmp(buffer, "PONG\r\n") == 0 ) {
-    msg = "ERRO   'PONG' is reserved for the server";
-    n = write(client_info.newsockfd, msg, strlen(msg));
-
-   } else if (strcmp(buffer, "OK\n") == 0 || strcmp(buffer, "OK\r\n") == 0 ) {
-    msg= "ERRO   It's not okay to send 'OK'";
-    n = write(client_info.newsockfd, msg, strlen(msg));
-	} else {
-		return n;
-	}
-
-	if (n >= 0) {
-		char log_msg[270] = "WRITE: ";
-		strcat(log_msg, msg);
 		generate_log(client_info.cli_addr, client_info.newsockfd, log_msg);
 	}
 	return n;
