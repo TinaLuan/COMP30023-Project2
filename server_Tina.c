@@ -114,6 +114,7 @@ while (1){
 
 	pthread_t tid;
 
+	client_info_t client_info;
 	client_info.newsockfd = newsockfd;
 	client_info.cli_addr = cli_addr;
 	//pthread_create(&tid, NULL, work_function, (void *)&newsockfd);
@@ -134,24 +135,23 @@ void *work_function(void *client_info_ptr ) {
 	client_info_t client_info = *((client_info_t *)client_info_ptr);
 	char buffer[256];
 	//int n, newsockfd = *((int *)newsockfd_ptr);
-	int n, newsockfd = client_info.newsockfd;
+	int n =0;
+	int newsockfd = client_info.newsockfd;
 	char *erro_msg; // BYTE????
 
 	while(1) {
 		bzero(buffer,256);
-		/* Read characters from the connection,
-		   then process */
+		/* Read characters from the connection, then process */
 		n = read( newsockfd ,buffer,255);
-		if (n < 0) {
+printf("read n: %d\n", n);
+		if (n <= 0) {
 		   generate_log(client_info.cli_addr, newsockfd, "DISCONNECTION\n");
 		   break;
 		}
 		if (buffer[0] == '\0') {
-			//generate_log(client_info.cli_addr, newsockfd, "DISCONNECTION\n");
-			//break;
 			continue;
 		}
-//printf("111\n");
+
 		char msg[270] = "READ: ";
 		strcat(msg, buffer);
 		generate_log(client_info.cli_addr, newsockfd, msg);
@@ -161,7 +161,7 @@ void *work_function(void *client_info_ptr ) {
 			strncpy(header, buffer, 4);
 			header[4] = '\0';
 		}
-//printf("222\n");
+
 		if (strcmp(header, "SOLN") == 0) {
 			n = stage_B(buffer,client_info);
 		} else if (strcmp(header, "WORK") == 0) {
@@ -294,7 +294,7 @@ int stage_B(char buffer[], client_info_t client_info) {
 	// if (strlen(buffer) != 100) {
 	// 	isError = true;
 	// }
-	/*
+
 	int len = str_char_count(buffer, ' ') +1;
 	printf("len %d\n", len);
 	char **list = tokenizer(buffer);
@@ -316,7 +316,7 @@ int stage_B(char buffer[], client_info_t client_info) {
 		n = write(client_info.newsockfd, msg, strlen(msg));
 		return n;
 	}
-*/
+
 
 	BYTE target[32];
 	calculate_target(buffer, target);
@@ -326,8 +326,10 @@ int stage_B(char buffer[], client_info_t client_info) {
 	concatenate(buffer, concat);
 
 	bool is_correct = verify(concat, target);
+printf("after verify");
 	if (is_correct) {
 		msg = "OKAY\r\n";
+printf("verify OKAYYYY\n");
 		n = write(client_info.newsockfd, msg, 6);
 	} else {
 		msg = "ERRO It is not a valid proof-of-work.\r\n";
@@ -346,9 +348,9 @@ int stage_C(char buffer[], client_info_t client_info) {
 	char *msg;
 	int n= 0;
 	//bool isError = false;
-/*
+
 	int len = str_char_count(buffer, ' ') +1;
-	printf("len %d\n", len);
+printf("len %d\n", len);
 	char **list = tokenizer(buffer);
 	if (len != 5) {
 		msg= "ERRO invalid message\r\n";
@@ -364,7 +366,7 @@ int stage_C(char buffer[], client_info_t client_info) {
 		n = write(client_info.newsockfd, msg, strlen(msg));
 		return n;
 	}
-*/
+
 
 	work_num++;
 	//if (work_num > 11) {
@@ -434,7 +436,7 @@ int stage_C(char buffer[], client_info_t client_info) {
 }
 
 void generate_log(struct sockaddr_in addr, int newsockfd, char *msg) {
-	//pthread_mutex_lock(&mutex);
+	pthread_mutex_lock(&mutex);
 	FILE *fp = fopen("./log.txt", "a");
 	time_t t = time(NULL);
     struct tm tm = *localtime(&t);
@@ -455,5 +457,5 @@ void generate_log(struct sockaddr_in addr, int newsockfd, char *msg) {
 	tm.tm_hour, tm.tm_min, tm.tm_sec);
 	printf("%s  %d  ", ip, newsockfd);
 	printf("%s", msg);
-	//pthread_mutex_unlock(&mutex);
+	pthread_mutex_unlock(&mutex);
 }
