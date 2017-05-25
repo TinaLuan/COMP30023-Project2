@@ -147,8 +147,9 @@ void *work_function(void *client_info_ptr ) {
 		   break;
 		}
 		if (buffer[0] == '\0') {
-			generate_log(client_info.cli_addr, newsockfd, "DISCONNECTION\n");
-			break;
+			//generate_log(client_info.cli_addr, newsockfd, "DISCONNECTION\n");
+			//break;
+			continue;
 		}
 //printf("111\n");
 		char msg[270] = "READ: ";
@@ -177,6 +178,7 @@ void *work_function(void *client_info_ptr ) {
 		}
 	}
 	close(newsockfd);
+	client_num--;
 	pthread_exit(NULL);
 
 	return NULL; // ??????
@@ -421,6 +423,7 @@ int stage_C(char buffer[], client_info_t client_info) {
 	//int n =0;
 	if (is_correct) {
 		n = write(client_info.newsockfd, solution_msg, 97); // not including \0
+		work_num--;
 	}
 	if (n >= 0) {
 		char log_msg[270] = "WRITE: ";
