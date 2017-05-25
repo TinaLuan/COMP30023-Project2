@@ -104,7 +104,7 @@ while (1){
 	   exit(1);
 	}
 	client_num++;
-	if (client_num >100) {
+	if (client_num >110) {
 		close(newsockfd);
 		client_num--;
 		continue;
@@ -147,6 +147,7 @@ void *work_function(void *client_info_ptr ) {
 		   break;
 		}
 		if (buffer[0] == '\0') {
+			generate_log(client_info.cli_addr, newsockfd, "DISCONNECTION\n");
 			break;
 		}
 //printf("111\n");
@@ -264,14 +265,14 @@ int stage_A(char buffer[], client_info_t client_info) {
 	n = write(client_info.newsockfd,msg,6);
 
    } else if (strcmp(buffer, "PONG\n") == 0 || strcmp(buffer, "PONG\r\n") == 0 ) {
-    msg = "ERRO   'PONG' is reserved for the server";
+    msg = "ERRO   'PONG' is reserved for the server\r\n";
     n = write(client_info.newsockfd, msg, strlen(msg));
 
    } else if (strcmp(buffer, "OK\n") == 0 || strcmp(buffer, "OK\r\n") == 0 ) {
-    msg= "ERRO   It's not okay to send 'OK'";
+    msg= "ERRO   It's not okay to send 'OK'\r\n";
     n = write(client_info.newsockfd, msg, strlen(msg));
 	} else {
-		msg= "ERRO   don't understand";
+		msg= "ERRO   don't understand\r\n";
 	    n = write(client_info.newsockfd, msg, strlen(msg));
 
 	}
@@ -291,7 +292,9 @@ int stage_B(char buffer[], client_info_t client_info) {
 	// if (strlen(buffer) != 100) {
 	// 	isError = true;
 	// }
+	/*
 	int len = str_char_count(buffer, ' ') +1;
+	printf("len %d\n", len);
 	char **list = tokenizer(buffer);
 	// if (sizeof(list)/sizeof(char*) != 4) {
 	// 	isError = true;
@@ -305,14 +308,13 @@ int stage_B(char buffer[], client_info_t client_info) {
 	if (strlen(list[0]) != 4 || strlen(list[1]) != 8 || strlen(list[2]) != 64
 	|| strlen(list[3])-2 != 16) {
 		isError = true;
-		printf("%d %d %d %d %d\n", strlen(list[0]), strlen(list[1]),
+		printf("%d %d %d %d \n", strlen(list[0]), strlen(list[1]),
 		strlen(list[2]), strlen(list[3]));
-	}
-	if (isError) {
 		msg= "ERRO invalid message\r\n";
 		n = write(client_info.newsockfd, msg, strlen(msg));
 		return n;
 	}
+*/
 
 	BYTE target[32];
 	calculate_target(buffer, target);
@@ -342,8 +344,9 @@ int stage_C(char buffer[], client_info_t client_info) {
 	char *msg;
 	int n= 0;
 	//bool isError = false;
-
+/*
 	int len = str_char_count(buffer, ' ') +1;
+	printf("len %d\n", len);
 	char **list = tokenizer(buffer);
 	if (len != 5) {
 		msg= "ERRO invalid message\r\n";
@@ -353,16 +356,17 @@ int stage_C(char buffer[], client_info_t client_info) {
 	if (strlen(list[0]) != 4 || strlen(list[1]) != 8 || strlen(list[2]) != 64
 	|| strlen(list[3]) != 16 || strlen(list[4])-2 != 2) {
 		//isError = true;
-		//printf("%d %d %d %d %d\n", strlen(list[0]), strlen(list[1]),
-		//strlen(list[2]), strlen(list[3]), strlen(list[4]));
+		printf("%d %d %d %d %d\n", strlen(list[0]), strlen(list[1]),
+		strlen(list[2]), strlen(list[3]), strlen(list[4]));
 		msg= "ERRO invalid message\r\n";
 		n = write(client_info.newsockfd, msg, strlen(msg));
 		return n;
 	}
-
+*/
 
 	work_num++;
-	if (work_num > 11) {
+	//if (work_num > 11) {
+	if (work_num > 13) {
 		msg= "ERRO too many works\r\n";
 		n = write(client_info.newsockfd, msg, strlen(msg));
 		work_num--;
@@ -427,7 +431,7 @@ int stage_C(char buffer[], client_info_t client_info) {
 }
 
 void generate_log(struct sockaddr_in addr, int newsockfd, char *msg) {
-	pthread_mutex_lock(&mutex);
+	//pthread_mutex_lock(&mutex);
 	FILE *fp = fopen("./log.txt", "a");
 	time_t t = time(NULL);
     struct tm tm = *localtime(&t);
@@ -443,5 +447,10 @@ void generate_log(struct sockaddr_in addr, int newsockfd, char *msg) {
 	fprintf(fp, "%s", msg);
 
 	fclose(fp);
-	pthread_mutex_unlock(&mutex);
+
+	printf("%02d/%02d/%d %02d:%02d:%02d  ", tm.tm_mday, tm.tm_mon + 1, tm.tm_year + 1900,
+	tm.tm_hour, tm.tm_min, tm.tm_sec);
+	printf("%s  %d  ", ip, newsockfd);
+	printf("%s", msg);
+	//pthread_mutex_unlock(&mutex);
 }
