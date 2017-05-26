@@ -31,6 +31,8 @@ queue_t *Q;
 typedef struct  {
 	int newsockfd;
 	struct sockaddr_in cli_addr;
+	bool *is_abort;
+	bool *is_disconnected;
 } client_info_t;
 #endif
 
@@ -126,6 +128,10 @@ while (1){
 	client_info_t client_info;
 	client_info.newsockfd = newsockfd;
 	client_info.cli_addr = cli_addr;
+	client_info.is_abort = (bool *)malloc(sizeof(bool));
+    client_info.is_disconnected = (bool *)malloc(sizeof(bool));
+    *(client_info.is_abort) = false;
+    *(client_info.is_disconnected) = false;
 	//pthread_create(&tid, NULL, work_function, (void *)&newsockfd);
 	pthread_create(&tid, NULL, work_function, (void *)&client_info);
 
@@ -149,14 +155,19 @@ void *work_function(void *client_info_ptr ) {
 	char *erro_msg; // BYTE????
 
 	while(1) {
+		if (*(client_info.is_disconnected)) {
+			break;
+		}
 		bzero(buffer,256);
 		/* Read characters from the connection, then process */
 		n = read( newsockfd ,buffer,255);
 		if (n < 0) {
-		   generate_log(client_info.cli_addr, newsockfd, "DISCONNECTION\n");
-		   break;
+			*(client_info.is_disconnected) = true;
+		   	generate_log(client_info.cli_addr, newsockfd, "DISCONNECTION\n");
+		   	break;
 		}
 		if (buffer[0] == '\0') {
+			*(client_info.is_disconnected) = true;
 			generate_log(client_info.cli_addr, newsockfd, "DISCONNECTION\n");
  			break;
 		}
@@ -172,7 +183,7 @@ void *work_function(void *client_info_ptr ) {
 		}
 
 		if (strcmp(header, "SOLN") == 0) {
-			n = stage_B(buffer,client_info);
+			n = stage_B(buffer, client_info);
 		} else if (strcmp(header, "WORK") == 0 || strcmp(header, "ABRT") == 0) {
 			n = stage_C(buffer, client_info);
 			//stage_C(buffer, client_info);
@@ -181,8 +192,7 @@ void *work_function(void *client_info_ptr ) {
 		}
 
 		if (n < 0){
-		   //perror("ERROR writing to socket");
-		   //exit(1);
+		   *(client_info.is_disconnected) = true;
 		   generate_log(client_info.cli_addr, newsockfd, "DISCONNECTION\n");
 		   break;
 		}
@@ -380,7 +390,14 @@ int stage_C(char buffer[], client_info_t client_info) {
 			work_num--;
 			return n;
 		}
-		enqueue(Q, buffer, &client_info, false);
+		if (Q->size >= 10) {
+			msg= "ERRO too many works                   \r\n";
+			n = write(client_info.newsockfd, msg, 40);
+			work_num--;
+			return n;
+		}
+		enqueue(Q, buffer, &client_info);
+		return n;
 	}
 
 
@@ -388,9 +405,10 @@ int stage_C(char buffer[], client_info_t client_info) {
 		node_t *node = Q->head;
 		while (node) {
 			if (node->client_info_ptr->newsockfd == client_info.newsockfd) {
-				node->is_abort = true;
+				*(node->client_info_ptr->is_abort) = true;
 				Q->size--;
 			}
+			node = node->next;
 		}
 		msg = "OKAY\r\n";
 		n = write(client_info.newsockfd, msg, 6);
@@ -433,40 +451,13 @@ void* deal_with_work(void *anything) {
 	while (1) {
 		if (Q->size > 0){
 			node_t *node = dequeue(Q);
-			while (node->is_abort == true) {
+			while (*(node->client_info_ptr->is_abort) == true) {
 				node = dequeue(Q);
 			}
 			int client_fd = node->client_info_ptr->newsockfd;
 			char buffer[256];
 			strcpy(buffer, node->buffer);
-			// char *msg;
-			// int n= 0;
-			//
-			// int len = str_char_count(buffer, ' ') +1;
-			// char **list = tokenizer(buffer);
-			// if (len != 5) {
-			// 	msg= "ERRO invalid message\r\n";
-			// 	n = write(client_fd, msg, strlen(msg));
-			// 	return n;
-			// }
-			// if (strlen(list[0]) != 4 || strlen(list[1]) != 8 || strlen(list[2]) != 64
-			// || strlen(list[3]) != 16 || strlen(list[4])-2 != 2) {
-			// 	printf("%d %d %d %d %d\n", strlen(list[0]), strlen(list[1]),
-			// 	strlen(list[2]), strlen(list[3]), strlen(list[4]));
-			// 	msg= "ERRO invalid message\r\n";
-			// 	n = write(client_fd, msg, strlen(msg));
-			// 	return n;
-			// }
-			//
-			//
-			// work_num++;
-			// //if (work_num > 13) {
-			// if (work_num > 11) {
-			// 	msg= "ERRO too many works\r\n";
-			// 	n = write(client_fd, msg, strlen(msg));
-			// 	work_num--;
-			// 	return n;
-			// }
+
 			int n= 0;
 			BYTE target[32];
 			calculate_target(buffer, target);
@@ -487,7 +478,7 @@ void* deal_with_work(void *anything) {
 
 		//	print_uint256(nonce);
 			bool is_correct = false;
-			while(!is_correct && !node->is_abort) {
+			while(!is_correct && ! *(node->client_info_ptr->is_abort) && ! *(node->client_info_ptr->is_disconnected)) {
 				uint256_add(nonce, nonce, adder);
 				j = 32;
 				for (i = 24; i<32; i++) {
@@ -523,6 +514,7 @@ void* deal_with_work(void *anything) {
 				generate_log(node->client_info_ptr->cli_addr, client_fd, log_msg);
 			}
 			if (n < 0){
+				//*(client_info.is_disconnected) = true;
 				generate_log(node->client_info_ptr->cli_addr, client_fd, "DISCONNECTION\n");
 				close(client_fd);
 				pthread_mutex_lock(&mutex);
@@ -532,7 +524,6 @@ void* deal_with_work(void *anything) {
 			}
 
 		}
-
 	}
 	pthread_exit(NULL);
 	return NULL;
