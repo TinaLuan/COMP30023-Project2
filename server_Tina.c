@@ -51,6 +51,8 @@ int main(int argc, char **argv)
 		exit(1);
 	}
 
+	pthread_mutex_init(&mutex, NULL);
+
 	int sockfd, newsockfd, portno;//, clilen;
 	socklen_t clilen;
 	//char buffer[256];
@@ -93,7 +95,7 @@ int main(int argc, char **argv)
 	FILE *log_fp = fopen("./log.txt", "w");
 	fclose(log_fp);
 	//pthread_t tids[NUM_THREADS]; // 2
-	client_info_t client_info;
+//	client_info_t client_info;
 
 while (1){
 	/* Accept a connection - block until a connection is ready to
@@ -104,7 +106,7 @@ while (1){
 	   exit(1);
 	}
 	client_num++;
-	if (client_num >110) {
+	if (client_num >100) {
 		close(newsockfd);
 		client_num--;
 		continue;
@@ -121,11 +123,12 @@ while (1){
 	pthread_create(&tid, NULL, work_function, (void *)&client_info);
 
 	//pthread_join(tid, NULL);
-	pthread_detach(tid);
-}
-
+	// pthread_detach(tid);
+	}
+generate_log(serv_addr, 0, "finish-------------------\n");
 	close(sockfd);
-
+	//client_info_t client_info;
+	//generate_log(serv_addr, 0, "finish-------------------\n");
 	return 0;
 }
 
@@ -140,16 +143,19 @@ void *work_function(void *client_info_ptr ) {
 	char *erro_msg; // BYTE????
 
 	while(1) {
+
+
 		bzero(buffer,256);
 		/* Read characters from the connection, then process */
 		n = read( newsockfd ,buffer,255);
 printf("read n: %d\n", n);
-		if (n <= 0) {
+		if (n < 0) {
 		   generate_log(client_info.cli_addr, newsockfd, "DISCONNECTION\n");
 		   break;
 		}
 		if (buffer[0] == '\0') {
-			continue;
+			generate_log(client_info.cli_addr, newsockfd, "DISCONNECTION\n");
+ 		   break;
 		}
 
 		char msg[270] = "READ: ";
@@ -171,14 +177,14 @@ printf("read n: %d\n", n);
 		}
 
 		if (n < 0){
-		   //perror("ERROR writing to socket");
-		   //exit(1);
 		   generate_log(client_info.cli_addr, newsockfd, "DISCONNECTION\n");
 		   break;
 		}
 	}
 	close(newsockfd);
+	pthread_mutex_lock(&mutex);
 	client_num--;
+	pthread_mutex_unlock(&mutex);
 	pthread_exit(NULL);
 
 	return NULL; // ??????
@@ -267,15 +273,15 @@ int stage_A(char buffer[], client_info_t client_info) {
 	n = write(client_info.newsockfd,msg,6);
 
    } else if (strcmp(buffer, "PONG\n") == 0 || strcmp(buffer, "PONG\r\n") == 0 ) {
-    msg = "ERRO   'PONG' is reserved for the server\r\n";
-    n = write(client_info.newsockfd, msg, strlen(msg));
+    msg = "ERRO   'PONG' is reserved             \r\n";
+    n = write(client_info.newsockfd, msg, 40);
 
    } else if (strcmp(buffer, "OK\n") == 0 || strcmp(buffer, "OK\r\n") == 0 ) {
-    msg= "ERRO   It's not okay to send 'OK'\r\n";
-    n = write(client_info.newsockfd, msg, strlen(msg));
+    msg= "ERRO   It's not okay to send 'OK'     \r\n";
+    n = write(client_info.newsockfd, msg, 40);
 	} else {
-		msg= "ERRO   don't understand\r\n";
-	    n = write(client_info.newsockfd, msg, strlen(msg));
+		msg= "ERRO   don't understand               \r\n";
+	    n = write(client_info.newsockfd, msg, 40);
 
 	}
 
@@ -291,20 +297,19 @@ int stage_B(char buffer[], client_info_t client_info) {
 	char *msg;
 	int n= 0;
 	bool isError = false;
-	// if (strlen(buffer) != 100) {
-	// 	isError = true;
+	// if (strlen(buffer) != 97) {
+	// 	msg= "ERRO invalid message                  \r\n";
+	// 	n = write(client_info.newsockfd, msg, 40);
+	// 	return n;
 	// }
 
 	int len = str_char_count(buffer, ' ') +1;
 	printf("len %d\n", len);
 	char **list = tokenizer(buffer);
-	// if (sizeof(list)/sizeof(char*) != 4) {
-	// 	isError = true;
-	// 	printf("num %d\n", sizeof(list)/sizeof(char*));
-	// }
+
 	if (len != 4) {
-		msg= "ERRO invalid message\r\n";
-		n = write(client_info.newsockfd, msg, strlen(msg));
+		msg= "ERRO invalid message                  \r\n";
+		n = write(client_info.newsockfd, msg, 40);
 		return n;
 	}
 	if (strlen(list[0]) != 4 || strlen(list[1]) != 8 || strlen(list[2]) != 64
@@ -312,8 +317,8 @@ int stage_B(char buffer[], client_info_t client_info) {
 		isError = true;
 		printf("%d %d %d %d \n", strlen(list[0]), strlen(list[1]),
 		strlen(list[2]), strlen(list[3]));
-		msg= "ERRO invalid message\r\n";
-		n = write(client_info.newsockfd, msg, strlen(msg));
+		msg= "ERRO invalid message                  \r\n";
+		n = write(client_info.newsockfd, msg, 40);
 		return n;
 	}
 
@@ -326,16 +331,15 @@ int stage_B(char buffer[], client_info_t client_info) {
 	concatenate(buffer, concat);
 
 	bool is_correct = verify(concat, target);
-printf("after verify");
+
 	if (is_correct) {
 		msg = "OKAY\r\n";
-printf("verify OKAYYYY\n");
 		n = write(client_info.newsockfd, msg, 6);
 	} else {
-		msg = "ERRO It is not a valid proof-of-work.\r\n";
+		msg = "ERRO It is not a valid proof-of-work. \r\n";
 		n = write(client_info.newsockfd, msg, 40);
 	}
-	if (n >= 0) {
+	if (n > 0) {
 		char log_msg[270] = "WRITE: ";
 		strcat(log_msg, msg);
 		//log_msg[strlen(log_msg)] = '\0';
@@ -353,8 +357,8 @@ int stage_C(char buffer[], client_info_t client_info) {
 printf("len %d\n", len);
 	char **list = tokenizer(buffer);
 	if (len != 5) {
-		msg= "ERRO invalid message\r\n";
-		n = write(client_info.newsockfd, msg, strlen(msg));
+		msg= "ERRO invalid message                  \r\n";
+		n = write(client_info.newsockfd, msg, 40);
 		return n;
 	}
 	if (strlen(list[0]) != 4 || strlen(list[1]) != 8 || strlen(list[2]) != 64
@@ -362,8 +366,8 @@ printf("len %d\n", len);
 		//isError = true;
 		printf("%d %d %d %d %d\n", strlen(list[0]), strlen(list[1]),
 		strlen(list[2]), strlen(list[3]), strlen(list[4]));
-		msg= "ERRO invalid message\r\n";
-		n = write(client_info.newsockfd, msg, strlen(msg));
+		msg= "ERRO invalid message                  \r\n";
+		n = write(client_info.newsockfd, msg, 40);
 		return n;
 	}
 
@@ -371,8 +375,8 @@ printf("len %d\n", len);
 	work_num++;
 	//if (work_num > 11) {
 	if (work_num > 13) {
-		msg= "ERRO too many works\r\n";
-		n = write(client_info.newsockfd, msg, strlen(msg));
+		msg= "ERRO too many works                   \r\n";
+		n = write(client_info.newsockfd, msg, 40);
 		work_num--;
 		return n;
 	}
@@ -396,6 +400,9 @@ printf("len %d\n", len);
 //	print_uint256(nonce);
 	bool is_correct = false;
 	while(!is_correct) {
+		// if (*(client_info.is_disconnected)) {
+		//
+		// }
 		uint256_add(nonce, nonce, adder);
 		j = 32;
 		for (i = 24; i<32; i++) {
