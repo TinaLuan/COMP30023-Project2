@@ -353,99 +353,24 @@ int stage_B(char buffer[], client_info_t client_info) {
 void stage_C(char buffer[], client_info_t client_info) {
 	if (buffer[0] == 'W')
 	enqueue(Q, buffer, &client_info, false);
-
-	if(buffer[0] == 'A') {
-
-	}
-
-
-/*
-	char *msg;
-	int n= 0;
-	//bool isError = false;
-
-	int len = str_char_count(buffer, ' ') +1;
-printf("len %d\n", len);
-	char **list = tokenizer(buffer);
-	if (len != 5) {
-		msg= "ERRO invalid message\r\n";
-		n = write(client_info.newsockfd, msg, strlen(msg));
-		return n;
-	}
-	if (strlen(list[0]) != 4 || strlen(list[1]) != 8 || strlen(list[2]) != 64
-	|| strlen(list[3]) != 16 || strlen(list[4])-2 != 2) {
-		//isError = true;
-		printf("%d %d %d %d %d\n", strlen(list[0]), strlen(list[1]),
-		strlen(list[2]), strlen(list[3]), strlen(list[4]));
-		msg= "ERRO invalid message\r\n";
-		n = write(client_info.newsockfd, msg, strlen(msg));
-		return n;
-	}
-
-
-	work_num++;
-	//if (work_num > 11) {
-	if (work_num > 13) {
-		msg= "ERRO too many works\r\n";
-		n = write(client_info.newsockfd, msg, strlen(msg));
-		work_num--;
-		return n;
-	}
-	BYTE target[32];
-	calculate_target(buffer, target);
-
-	BYTE concat[40]; // 32-BYTE seed + 8-BYTE(64bits/8) solution
-	concatenate(buffer, concat);
-
-	BYTE nonce[32];
-	uint256_init(nonce);
-	int i, j=24;
-	for (i=32;i<40;i++) {
-		nonce[j++] = concat[i];
-	}
-//print_uint256(nonce);
-	BYTE adder[32];
-	uint256_init(adder);
-	adder[31] = 0x1;
-
-//	print_uint256(nonce);
-	bool is_correct = false;
-	while(!is_correct) {
-		uint256_add(nonce, nonce, adder);
-		j = 32;
-		for (i = 24; i<32; i++) {
-			concat[j++] = nonce[i];
+	int n=0;
+	if(buffer[0] == 'A' && Q->size > 0) {
+		node_t *node = head;
+		while (node) {
+			if (node->client_info_ptr->newsockfd == client_info.newsockfd) {
+				node->is_abort = true;
+				Q->size--;
+			}
 		}
-		is_correct = verify(concat, target);
+		char *msg = "OKAY\r\n";
+		n = write(client_info.newsockfd, msg, 6);
+		if (n > 0) {
+			char log_msg[270] = "WRITE: ";
+			strcat(log_msg, msg);
+			generate_log(client_info.cli_addr, client_info.newsockfd, log_msg);
+		}
 	}
-//printf("find sl\n");
-	// According to the spec, there's always a solution
-	// so no need to consider when is_correct is false
-	char solution_msg[97] = "SOLN ";
-	// difficulty 8 hex digits, 1 space, seed 64 hex, and 1 space
-	strncpy(solution_msg + 5, buffer + 5, 8+1+64+1);
-	//printf("%s\n", solution_msg);
 
-	// solution 16 hex
-	j= strlen(solution_msg);
-	for (i = 32; i<40; i++) {
-		sprintf(solution_msg+j, "%02x", concat[i]);
-		//printf("%s\n", msg);
-		j+=2;
-	}
-	solution_msg[95] = '\r';
-	solution_msg[96] = '\n';
-
-	if (is_correct) {
-		n = write(client_info.newsockfd, solution_msg, 97); // not including \0
-		work_num--;
-	}
-	if (n >= 0) {
-		char log_msg[270] = "WRITE: ";
-		strcat(log_msg, solution_msg);
-		generate_log(client_info.cli_addr, client_info.newsockfd, log_msg);
-	}
-	return n;*/
 }
 
 void generate_log(struct sockaddr_in addr, int newsockfd, char *msg) {
@@ -480,7 +405,7 @@ void* deal_with_work(void *anything) {
 		while (node->is_abort == true) {
 			*node = dequeue(Q);
 		}
-		int client_fd = node->client_info_ptr->nclient_fd;
+		int client_fd = node->client_info_ptr->newsockfd;
 		char buffer[256];
 		strcpy(buffer, node->buffer);
 		char *msg;
@@ -531,7 +456,7 @@ void* deal_with_work(void *anything) {
 
 	//	print_uint256(nonce);
 		bool is_correct = false;
-		while(!is_correct) {
+		while(!is_correct && !node->is_abort) {
 			uint256_add(nonce, nonce, adder);
 			j = 32;
 			for (i = 24; i<32; i++) {
@@ -564,10 +489,10 @@ void* deal_with_work(void *anything) {
 		if (n > 0) {
 			char log_msg[270] = "WRITE: ";
 			strcat(log_msg, solution_msg);
-			generate_log(client_info_ptr->cli_addr, client_fd, log_msg);
+			generate_log(node->client_info_ptr->cli_addr, client_fd, log_msg);
 		}
 		if (n < 0){
-			generate_log(client_info.cli_addr, newsockfd, "DISCONNECTION\n");
+			generate_log(node->client_info_ptr->cli_addr, client_fd, "DISCONNECTION\n");
 		    close(newsockfd);
 	   		pthread_mutex_lock(&mutex);
 	   		client_num--;

@@ -4,7 +4,6 @@ The port number is passed as an argument
 
  To compile: gcc server.c -o server
 */
-
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -14,21 +13,40 @@ The port number is passed as an argument
 #include <unistd.h>
 #include <pthread.h>
 #include <stdbool.h>
+#include <time.h>
+#include <arpa/inet.h>
 
-#include "code/uint256.h"
-#include "code/crypto/sha256.c"
+#include "uint256.h"
+#include "sha256.h"
+#include "helper.h"
 
 //#define NUM_THREADS 2
+pthread_mutex_t mutex;
+int client_num = 0;
+int work_num = 0;
+queue_t *Q;
+
+#ifndef CLIENT
+#define CLIENT
+typedef struct  {
+	int newsockfd;
+	struct sockaddr_in cli_addr;
+} client_info_t;
+#endif
 
 void *work_function(void *newsockfd_ptr);
-int stage_A(char buffer[], int newsockfd);
-int stage_B(char buffer[], int newsockfd);
-int stage_C(char buffer[], int newsockfd);
+int stage_A(char buffer[], client_info_t client_info);
+int stage_B(char buffer[], client_info_t client_info);
+void stage_C(char buffer[], client_info_t client_info);
 
 bool verify(BYTE concat[], BYTE target[]);
 void concatenate(char buffer[], BYTE concat[]);
 void calculate_target(char buffer[], BYTE target[]);
 BYTE hex_to_byte(char buffer[], int start);
+void generate_log(struct sockaddr_in addr, int newsockfd, char *msg);
+void* deal_with_work(void *anything);
+
+
 int main(int argc, char **argv)
 {
 	if (argc < 2)
@@ -76,127 +94,108 @@ int main(int argc, char **argv)
 
 	clilen = sizeof(cli_addr);
 
-	//pthread_t tids[NUM_THREADS]; // 2
+	FILE *log_fp = fopen("./log.txt", "w");
+	fclose(log_fp);
+
+
+	Q = init_queue();
+	pthread_t work_tid;
+	pthread_create(&work_tid, NULL, deal_with_work, NULL);
+
+	//client_info_t client_info;
+
 while (1){
 	/* Accept a connection - block until a connection is ready to
 	be accepted. Get back a new file descriptor to communicate on. */
-
 	newsockfd = accept(	sockfd, (struct sockaddr *) &cli_addr, &clilen);
-	if (newsockfd < 0)
-	{
+	if (newsockfd < 0) {
 	   perror("ERROR on accept");
 	   exit(1);
 	}
+	client_num++;
+	if (client_num >110) {
+		close(newsockfd);
+		client_num--;
+		continue;
+	}
+
+	generate_log( cli_addr,newsockfd, "CONNECTION\n");
 
 	pthread_t tid;
-	pthread_create(&tid, NULL, work_function, (void *)&newsockfd);
+
+	client_info_t client_info;
+	client_info.newsockfd = newsockfd;
+	client_info.cli_addr = cli_addr;
+	//pthread_create(&tid, NULL, work_function, (void *)&newsockfd);
+	pthread_create(&tid, NULL, work_function, (void *)&client_info);
+
 	//pthread_join(tid, NULL);
 	pthread_detach(tid);
 }
+
 	close(sockfd);
-	//pthread_exit(NULL);
+
 	return 0;
 }
 
 
-void *work_function(void *newsockfd_ptr) {
+//void *work_function(void *newsockfd_ptr ) {
+void *work_function(void *client_info_ptr ) {
+	client_info_t client_info = *((client_info_t *)client_info_ptr);
 	char buffer[256];
-	int n, newsockfd = *((int *)newsockfd_ptr);
+	//int n, newsockfd = *((int *)newsockfd_ptr);
+	int n =0;
+	int newsockfd = client_info.newsockfd;
 	char *erro_msg; // BYTE????
-	bzero(buffer,256);
 
-	/* Read characters from the connection,
-	   then process */
-	n = read( newsockfd ,buffer,255);
-	if (n < 0) {
-	   perror("ERROR reading from socket");
-	   exit(1);
+	while(1) {
+		bzero(buffer,256);
+		/* Read characters from the connection, then process */
+		n = read( newsockfd ,buffer,255);
+printf("read n: %d\n", n);
+		if (n < 0) {
+		   generate_log(client_info.cli_addr, newsockfd, "DISCONNECTION\n");
+		   break;
+		}
+		if (buffer[0] == '\0') {
+			generate_log(client_info.cli_addr, newsockfd, "DISCONNECTION\n");
+ 		   break;
+		}
+
+		char msg[270] = "READ: ";
+		strcat(msg, buffer);
+		generate_log(client_info.cli_addr, newsockfd, msg);
+
+		char header[5] = "";
+		if (strlen(buffer)>=4) {
+			strncpy(header, buffer, 4);
+			header[4] = '\0';
+		}
+
+		if (strcmp(header, "SOLN") == 0) {
+			n = stage_B(buffer,client_info);
+		} else if (strcmp(header, "WORK") == 0 || strcmp(header, "ABRT") == 0) {
+			//n = stage_C(buffer, client_info);
+			stage_C(buffer, client_info);
+		} else {
+			n = stage_A(buffer, client_info);
+		}
+
+		if (n < 0){
+		   //perror("ERROR writing to socket");
+		   //exit(1);
+		   generate_log(client_info.cli_addr, newsockfd, "DISCONNECTION\n");
+		   break;
+		}
 	}
+	close(newsockfd);
+	client_num--;
+	pthread_exit(NULL);
 
-	n= stage_A(buffer, newsockfd);
-	if (n < 0)
-	{
-	   perror("ERROR writing to socket");
-	   exit(1);
-	}
-
-	char header[5];
-	strncpy(header, buffer, 4);
-	header[4] = '\0';
-
-	if (strcmp(header, "SOLN") == 0) {
-		n = stage_B(buffer, newsockfd);
-	}
-
-	if (n < 0)
-	{
-	   perror("ERROR writing to socket");
-	   exit(1);
-	}
-
-	if (strcmp(header, "WORK") == 0) {
-
-		n = stage_C(buffer, newsockfd);
-	}
-
- //	close( *((int *)sockfd_ptr) );
 	return NULL; // ??????
 }
 
-int stage_C(char buffer[], int newsockfd) {
-	BYTE target[32];
-	calculate_target(buffer, target);
 
-	BYTE concat[40]; // 32-BYTE seed + 8-BYTE(64bits/8) solution
-	concatenate(buffer, concat);
-
-	BYTE nonce[32];
-	uint256_init(nonce);
-	int i, j=24;
-	for (i=32;i<40;i++) {
-		nonce[j++] = concat[i];
-	}
-//print_uint256(nonce);
-	BYTE adder[32];
-	uint256_init(adder);
-	adder[31] = 0x1;
-
-//	print_uint256(nonce);
-	bool is_correct = false;
-	while(!is_correct) {
-		uint256_add(nonce, nonce, adder);
-		j = 32;
-		for (i = 24; i<32; i++) {
-			concat[j++] = nonce[i];
-		}
-		is_correct = verify(concat, target);
-	}
-printf("find sl\n");
-	// According to the spec, there's always a solution
-	// so no need to consider when is_correct is false
-	char solution_msg[96] = "SOLN ";
-	// difficulty 8 hex digits, 1 space, seed 64 hex, and 1 space
-	strncpy(solution_msg + 5, buffer + 5, 8+1+64+1);
-	//printf("%s\n", solution_msg);
-
-	// solution 16 hex
-	j= strlen(solution_msg);
-	for (i = 32; i<40; i++) {
-		sprintf(solution_msg+j, "%02x", concat[i]);
-		//printf("%s\n", msg);
-		j+=2;
-	}
-	solution_msg[95] = '\0';
-
-	//printf("%s\n", solution_msg);
-	int n =0;
-	if (is_correct) {
-		n = write(newsockfd, solution_msg, 96); // including \0
-	}
-
-
-	return n;
-}
 
 BYTE hex_to_byte(char buffer[], int start) {
 	char one_byte[3];
@@ -219,7 +218,7 @@ void calculate_target(char buffer[], BYTE target[]) {
 
 	alpha = (uint32_t)hex_to_byte(buffer, 5);
 
-	// starts from 7th, and then 6 hex digits are beta
+ 	//starts from 7th, and then 6 hex digits are beta
 	j = 29;
 	for (i = 5 + 2; i < 5 + 2 + 6; i+=2) {
 		beta[j++] = hex_to_byte(buffer, i);
@@ -229,8 +228,8 @@ void calculate_target(char buffer[], BYTE target[]) {
 	expo *= 0x8;
 	base[31] = 0x2;
 	uint256_exp(res, base, expo);
-	uint256_mul(target, beta, res);
-	print_uint256(target);
+	uint256_mul(target, beta,res);
+	//print_uint256(target);
 }
 
 void concatenate(char buffer[], BYTE concat[]) {
@@ -244,26 +243,6 @@ void concatenate(char buffer[], BYTE concat[]) {
 		if (i == 14 + 64) i++;
 		concat[j++] = hex_to_byte(buffer, i);
 	}
-}
-
-int stage_B(char buffer[], int newsockfd) {
-	char *erro_msg= "ERRO It is not a valid proof-of-work.\n";
-	int n = 0;
-
-	BYTE target[32];
-	calculate_target(buffer, target);
-
-	// Concatenate the seed and the solution together
-	BYTE concat[40]; // 32-BYTE seed + 8-BYTE(64bits/8) solution
-	concatenate(buffer, concat);
-
-	bool is_correct = verify(concat, target);
-	if (is_correct) {
-		n = write(newsockfd, "OK", 3);
-	} else {
-		n = write(newsockfd, erro_msg, 40);
-	}
-	return n;
 }
 
 bool verify(BYTE concat[], BYTE target[]) {
@@ -288,21 +267,244 @@ bool verify(BYTE concat[], BYTE target[]) {
 	return false;
 }
 
-int stage_A(char buffer[], int newsockfd) {
+//int stage_A(char buffer[], int newsockfd) {
+int stage_A(char buffer[], client_info_t client_info) {
 	int n = 0;
-	char *erro_msg;
+	char *msg;
 	//BYTE *erro_msg; // ??????
 
 	if (strcmp(buffer, "PING\n") == 0 || strcmp(buffer, "PING\r\n") == 0 ) {
-    n = write(newsockfd,"PONG",5);
+    msg = "PONG\r\n";
+	n = write(client_info.newsockfd,msg,6);
 
    } else if (strcmp(buffer, "PONG\n") == 0 || strcmp(buffer, "PONG\r\n") == 0 ) {
-    erro_msg = "ERRO   'PONG' is reserved for the server";
-    n = write(newsockfd, erro_msg, 40);
+    msg = "ERRO   'PONG' is reserved for the server\r\n";
+    n = write(client_info.newsockfd, msg, strlen(msg));
 
    } else if (strcmp(buffer, "OK\n") == 0 || strcmp(buffer, "OK\r\n") == 0 ) {
-    erro_msg= "ERRO   It's not okay to send 'OK'";
-    n = write(newsockfd, erro_msg, 40);
+    msg= "ERRO   It's not okay to send 'OK'\r\n";
+    n = write(client_info.newsockfd, msg, strlen(msg));
+	} else {
+		msg= "ERRO   don't understand\r\n";
+	    n = write(client_info.newsockfd, msg, strlen(msg));
+
+	}
+
+	if (n >= 0) {
+		char log_msg[270] = "WRITE: ";
+		strcat(log_msg, msg);
+		generate_log(client_info.cli_addr, client_info.newsockfd, log_msg);
 	}
 	return n;
+}
+
+int stage_B(char buffer[], client_info_t client_info) {
+	char *msg;
+	int n= 0;
+	bool isError = false;
+	if (strlen(buffer) != 100) {
+		msg= "ERRO invalid message\r\n";
+		n = write(client_info.newsockfd, msg, strlen(msg));
+		return n;
+	}
+
+	int len = str_char_count(buffer, ' ') +1;
+	printf("len %d\n", len);
+	char **list = tokenizer(buffer);
+
+	if (len != 4) {
+		msg= "ERRO invalid message\r\n";
+		n = write(client_info.newsockfd, msg, strlen(msg));
+		return n;
+	}
+	if (strlen(list[0]) != 4 || strlen(list[1]) != 8 || strlen(list[2]) != 64
+	|| strlen(list[3])-2 != 16) {
+		isError = true;
+		printf("%d %d %d %d \n", strlen(list[0]), strlen(list[1]),
+		strlen(list[2]), strlen(list[3]));
+		msg= "ERRO invalid message\r\n";
+		n = write(client_info.newsockfd, msg, strlen(msg));
+		return n;
+	}
+
+
+	BYTE target[32];
+	calculate_target(buffer, target);
+
+	// Concatenate the seed and the solution together
+	BYTE concat[40]; // 32-BYTE seed + 8-BYTE(64bits/8) solution
+	concatenate(buffer, concat);
+
+	bool is_correct = verify(concat, target);
+
+	if (is_correct) {
+		msg = "OKAY\r\n";
+		n = write(client_info.newsockfd, msg, 6);
+	} else {
+		msg = "ERRO It is not a valid proof-of-work.\r\n";
+		n = write(client_info.newsockfd, msg, 40);
+	}
+	if (n > 0) {
+		char log_msg[270] = "WRITE: ";
+		strcat(log_msg, msg);
+		//log_msg[strlen(log_msg)] = '\0';
+		generate_log(client_info.cli_addr, client_info.newsockfd, log_msg);
+	}
+	return n;
+}
+
+void stage_C(char buffer[], client_info_t client_info) {
+	if (buffer[0] == 'W')
+	enqueue(Q, buffer, &client_info, false);
+	int n=0;
+	if(buffer[0] == 'A' && Q->size > 0) {
+		node_t *node = Q->head;
+		while (node) {
+			if (node->client_info_ptr->newsockfd == client_info.newsockfd) {
+				node->is_abort = true;
+				Q->size--;
+			}
+		}
+		char *msg = "OKAY\r\n";
+		n = write(client_info.newsockfd, msg, 6);
+		if (n > 0) {
+			char log_msg[270] = "WRITE: ";
+			strcat(log_msg, msg);
+			generate_log(client_info.cli_addr, client_info.newsockfd, log_msg);
+		}
+	}
+
+}
+
+void generate_log(struct sockaddr_in addr, int newsockfd, char *msg) {
+	pthread_mutex_lock(&mutex);
+	FILE *fp = fopen("./log.txt", "a");
+	time_t t = time(NULL);
+    struct tm tm = *localtime(&t);
+
+	fprintf(fp, "%02d/%02d/%d %02d:%02d:%02d  ", tm.tm_mday, tm.tm_mon + 1, tm.tm_year + 1900,
+	 tm.tm_hour, tm.tm_min, tm.tm_sec);
+
+	char ip[16];
+	inet_ntop(AF_INET, &(addr.sin_addr), ip, 15);
+	ip[15] = '\0';
+	fprintf(fp, "%s  %d  ", ip, newsockfd);
+
+	fprintf(fp, "%s", msg);
+
+	fclose(fp);
+
+	printf("%02d/%02d/%d %02d:%02d:%02d  ", tm.tm_mday, tm.tm_mon + 1, tm.tm_year + 1900,
+	tm.tm_hour, tm.tm_min, tm.tm_sec);
+	printf("%s  %d  ", ip, newsockfd);
+	printf("%s", msg);
+	pthread_mutex_unlock(&mutex);
+}
+
+void* deal_with_work(void *anything) {
+	while (1) {
+	if (Q->size > 0){
+		node_t *node = dequeue(Q);
+		while (node->is_abort == true) {
+			node = dequeue(Q);
+		}
+		int client_fd = node->client_info_ptr->newsockfd;
+		char buffer[256];
+		strcpy(buffer, node->buffer);
+		char *msg;
+		int n= 0;
+		//bool isError = false;
+
+		int len = str_char_count(buffer, ' ') +1;
+		char **list = tokenizer(buffer);
+		if (len != 5) {
+			msg= "ERRO invalid message\r\n";
+			n = write(client_fd, msg, strlen(msg));
+			return n;
+		}
+		if (strlen(list[0]) != 4 || strlen(list[1]) != 8 || strlen(list[2]) != 64
+		|| strlen(list[3]) != 16 || strlen(list[4])-2 != 2) {
+			printf("%d %d %d %d %d\n", strlen(list[0]), strlen(list[1]),
+			strlen(list[2]), strlen(list[3]), strlen(list[4]));
+			msg= "ERRO invalid message\r\n";
+			n = write(client_fd, msg, strlen(msg));
+			return n;
+		}
+
+
+		work_num++;
+		//if (work_num > 13) {
+		if (work_num > 11) {
+			msg= "ERRO too many works\r\n";
+			n = write(client_fd, msg, strlen(msg));
+			work_num--;
+			return n;
+		}
+		BYTE target[32];
+		calculate_target(buffer, target);
+
+		BYTE concat[40]; // 32-BYTE seed + 8-BYTE(64bits/8) solution
+		concatenate(buffer, concat);
+
+		BYTE nonce[32];
+		uint256_init(nonce);
+		int i, j=24;
+		for (i=32;i<40;i++) {
+			nonce[j++] = concat[i];
+		}
+	//print_uint256(nonce);
+		BYTE adder[32];
+		uint256_init(adder);
+		adder[31] = 0x1;
+
+	//	print_uint256(nonce);
+		bool is_correct = false;
+		while(!is_correct && !node->is_abort) {
+			uint256_add(nonce, nonce, adder);
+			j = 32;
+			for (i = 24; i<32; i++) {
+				concat[j++] = nonce[i];
+			}
+			is_correct = verify(concat, target);
+		}
+	//printf("find sl\n");
+		// According to the spec, there's always a solution
+		// so no need to consider when is_correct is false
+		char solution_msg[97] = "SOLN ";
+		// difficulty 8 hex digits, 1 space, seed 64 hex, and 1 space
+		strncpy(solution_msg + 5, buffer + 5, 8+1+64+1);
+		//printf("%s\n", solution_msg);
+
+		// solution 16 hex
+		j= strlen(solution_msg);
+		for (i = 32; i<40; i++) {
+			sprintf(solution_msg+j, "%02x", concat[i]);
+			//printf("%s\n", msg);
+			j+=2;
+		}
+		solution_msg[95] = '\r';
+		solution_msg[96] = '\n';
+
+		if (is_correct) {
+			n = write(client_fd, solution_msg, 97); // not including \0
+			work_num--;
+		}
+		if (n > 0) {
+			char log_msg[270] = "WRITE: ";
+			strcat(log_msg, solution_msg);
+			generate_log(node->client_info_ptr->cli_addr, client_fd, log_msg);
+		}
+		if (n < 0){
+			generate_log(node->client_info_ptr->cli_addr, client_fd, "DISCONNECTION\n");
+		    close(client_fd);
+	   		pthread_mutex_lock(&mutex);
+	   		client_num--;
+	   		pthread_mutex_unlock(&mutex);
+	   		pthread_exit(NULL);
+		}
+
+	}
+	}
+	pthread_exit(NULL);
+	return NULL;
 }
